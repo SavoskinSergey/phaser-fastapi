@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Phaser Multiplayer Game</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        background: #1a1a1a;
+        font-family: Arial, sans-serif;
+      }
+      #app {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      #login-container {
+        background: #2a2a2a;
+        padding: 30px;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        max-width: 400px;
+        width: 100%;
+      }
+      #game-container {
+        display: none;
+      }
+      h1 {
+        color: #fff;
+        text-align: center;
+        margin-bottom: 20px;
+      }
+      .form-group {
+        margin-bottom: 15px;
+      }
+      label {
+        display: block;
+        color: #ccc;
+        margin-bottom: 5px;
+        font-size: 14px;
+      }
+      input {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid #444;
+        border-radius: 5px;
+        background: #333;
+        color: #fff;
+        font-size: 14px;
+        box-sizing: border-box;
+      }
+      input:focus {
+        outline: none;
+        border-color: #00ff00;
+      }
+      button {
+        width: 100%;
+        padding: 12px;
+        background: #00ff00;
+        color: #000;
+        border: none;
+        border-radius: 5px;
+        font-size: 16px;
+        font-weight: bold;
+        cursor: pointer;
+        margin-top: 10px;
+      }
+      button:hover {
+        background: #00cc00;
+      }
+      button:disabled {
+        background: #555;
+        cursor: not-allowed;
+      }
+      .error {
+        color: #ff4444;
+        font-size: 12px;
+        margin-top: 5px;
+      }
+      .switch-form {
+        text-align: center;
+        margin-top: 15px;
+        color: #ccc;
+        font-size: 14px;
+      }
+      .switch-form a {
+        color: #00ff00;
+        cursor: pointer;
+        text-decoration: underline;
+      }
+      .switch-form a:hover {
+        color: #00cc00;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="login-container">
+        <h1>Вход в игру</h1>
+        <div id="login-form">
+          <div class="form-group">
+            <label for="login-username">Имя пользователя:</label>
+            <input type="text" id="login-username" placeholder="Введите имя пользователя" />
+          </div>
+          <div class="form-group">
+            <label for="login-password">Пароль:</label>
+            <input type="password" id="login-password" placeholder="Введите пароль" />
+          </div>
+          <div id="login-error" class="error"></div>
+          <button id="login-btn">Войти</button>
+          <div class="switch-form">
+            Нет аккаунта? <a id="switch-to-register">Зарегистрироваться</a>
+          </div>
+        </div>
+        <div id="register-form" style="display: none;">
+          <div class="form-group">
+            <label for="register-username">Имя пользователя:</label>
+            <input type="text" id="register-username" placeholder="Введите имя пользователя" />
+          </div>
+          <div class="form-group">
+            <label for="register-email">Email:</label>
+            <input type="email" id="register-email" placeholder="Введите email" />
+          </div>
+          <div class="form-group">
+            <label for="register-password">Пароль:</label>
+            <input type="password" id="register-password" placeholder="Введите пароль" />
+          </div>
+          <div id="register-error" class="error"></div>
+          <button id="register-btn">Зарегистрироваться</button>
+          <div class="switch-form">
+            Уже есть аккаунт? <a id="switch-to-login">Войти</a>
+          </div>
+        </div>
+      </div>
+      <div id="game-container"></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
