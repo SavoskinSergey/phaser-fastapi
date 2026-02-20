@@ -1,6 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock Phaser before importing GameScene
+const mockTileSprite = { setOrigin: vi.fn(), setDepth: vi.fn() };
+const mockSprite = {
+  setOrigin: vi.fn(),
+  play: vi.fn(),
+  anims: { currentAnim: { key: 'mario_idle' } },
+};
+const mockGraphics = {
+  setDepth: vi.fn(),
+  lineStyle: vi.fn(),
+  moveTo: vi.fn(),
+  lineTo: vi.fn(),
+  strokePath: vi.fn(),
+};
+
 const mockAdd = {
   rectangle: vi.fn().mockReturnValue({
     setPosition: vi.fn(),
@@ -16,6 +30,9 @@ const mockAdd = {
     on: vi.fn(), // Phaser EventEmitter — нужен для exitButton.on('pointerover', ...)
     destroy: vi.fn(),
   }),
+  tileSprite: vi.fn().mockReturnValue(mockTileSprite),
+  sprite: vi.fn().mockReturnValue(mockSprite),
+  graphics: vi.fn().mockReturnValue(mockGraphics),
 };
 
 const mockInput = {
@@ -37,6 +54,16 @@ vi.mock('phaser', () => ({
       add = mockAdd;
       input = mockInput;
       game = mockGame;
+      textures = {
+        exists: vi.fn().mockReturnValue(true),
+        get: vi.fn().mockReturnValue({ frameTotal: 16 }),
+      };
+      anims = {
+        exists: vi.fn().mockReturnValue(true),
+        create: vi.fn(),
+        generateFrameNumbers: vi.fn().mockReturnValue([{ key: 'mario', frame: 0 }]),
+      };
+      cameras = { main: { width: 800, height: 600 } };
     },
     Input: {
       Keyboard: {
@@ -117,7 +144,7 @@ describe('GameScene', () => {
     it('should create player sprite and label', () => {
       gameScene.create();
 
-      expect(mockAdd.rectangle).toHaveBeenCalled();
+      expect(mockAdd.sprite).toHaveBeenCalledWith(100, 100, 'mario');
       expect(mockAdd.text).toHaveBeenCalled();
     });
 
@@ -198,13 +225,18 @@ describe('GameScene', () => {
   });
 
   describe('update', () => {
+    const spriteWithAnims = {
+      anims: { currentAnim: { key: 'mario_idle' } },
+      play: vi.fn(),
+    };
+
     it('should not send movement if WebSocket is not open', () => {
       const mockWs = {
         readyState: 0, // CONNECTING
         send: vi.fn(),
       };
       (gameScene as any).ws = mockWs;
-      (gameScene as any).mySprite = mockAdd.rectangle();
+      (gameScene as any).mySprite = spriteWithAnims;
 
       gameScene.update(0, 16);
 
@@ -217,7 +249,7 @@ describe('GameScene', () => {
         send: vi.fn(),
       };
       (gameScene as any).ws = mockWs;
-      (gameScene as any).mySprite = mockAdd.rectangle();
+      (gameScene as any).mySprite = spriteWithAnims;
       (gameScene as any).keys = {
         left: { isDown: true },
         right: { isDown: false },
@@ -240,7 +272,7 @@ describe('GameScene', () => {
         send: vi.fn(),
       };
       (gameScene as any).ws = mockWs;
-      (gameScene as any).mySprite = mockAdd.rectangle();
+      (gameScene as any).mySprite = spriteWithAnims;
       (gameScene as any).keys = {
         left: { isDown: true },
         right: { isDown: false },

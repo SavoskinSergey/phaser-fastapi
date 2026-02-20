@@ -4,11 +4,18 @@ import { AuthService } from './AuthService';
 
 const API_URL = 'http://localhost:8000';
 
-// Элементы формы
+// Элементы страниц
+const startPage = document.getElementById('start-page')!;
 const loginContainer = document.getElementById('login-container')!;
 const gameContainer = document.getElementById('game-container')!;
 const loginForm = document.getElementById('login-form')!;
 const registerForm = document.getElementById('register-form')!;
+
+// Элементы стартовой страницы
+const continueBtn = document.getElementById('continue-btn') as HTMLButtonElement;
+const loginStartBtn = document.getElementById('login-start-btn') as HTMLButtonElement;
+const registerStartBtn = document.getElementById('register-start-btn') as HTMLButtonElement;
+const logoutBtn = document.getElementById('logout-btn') as HTMLButtonElement;
 
 const loginUsernameInput = document.getElementById('login-username') as HTMLInputElement;
 const loginPasswordInput = document.getElementById('login-password') as HTMLInputElement;
@@ -23,8 +30,74 @@ const registerError = document.getElementById('register-error')!;
 
 const switchToRegister = document.getElementById('switch-to-register')!;
 const switchToLogin = document.getElementById('switch-to-login')!;
+const backToStartFromLogin = document.getElementById('back-to-start-from-login')!;
+const backToStartFromRegister = document.getElementById('back-to-start-from-register')!;
 
 let game: Phaser.Game | null = null;
+
+// Показываем стартовую страницу
+function showStartPage() {
+  startPage.style.display = 'block';
+  loginContainer.style.display = 'none';
+  gameContainer.style.display = 'none';
+  
+  // Проверяем, залогинен ли пользователь
+  const isLoggedIn = AuthService.hasToken();
+  continueBtn.style.display = isLoggedIn ? 'block' : 'none';
+  logoutBtn.style.display = isLoggedIn ? 'block' : 'none';
+  loginStartBtn.style.display = isLoggedIn ? 'none' : 'block';
+  registerStartBtn.style.display = isLoggedIn ? 'none' : 'block';
+}
+
+// Показываем форму логина
+function showLoginForm() {
+  startPage.style.display = 'none';
+  loginContainer.style.display = 'block';
+  loginForm.style.display = 'block';
+  registerForm.style.display = 'none';
+  loginError.textContent = '';
+  registerError.textContent = '';
+}
+
+// Показываем форму регистрации
+function showRegisterForm() {
+  startPage.style.display = 'none';
+  loginContainer.style.display = 'block';
+  loginForm.style.display = 'none';
+  registerForm.style.display = 'block';
+  loginError.textContent = '';
+  registerError.textContent = '';
+}
+
+// Обработчики кнопок стартовой страницы
+continueBtn.addEventListener('click', async () => {
+  try {
+    const tokenData = await AuthService.validateToken();
+    if (tokenData) {
+      startGame(tokenData);
+    } else {
+      // Токен невалиден, показываем форму входа
+      showLoginForm();
+    }
+  } catch (error) {
+    console.error('Ошибка при продолжении:', error);
+    AuthService.clearToken();
+    showLoginForm();
+  }
+});
+
+loginStartBtn.addEventListener('click', () => {
+  showLoginForm();
+});
+
+registerStartBtn.addEventListener('click', () => {
+  showRegisterForm();
+});
+
+logoutBtn.addEventListener('click', () => {
+  AuthService.clearToken();
+  showStartPage();
+});
 
 // Переключение между формами
 switchToRegister.addEventListener('click', () => {
@@ -37,6 +110,15 @@ switchToLogin.addEventListener('click', () => {
   registerForm.style.display = 'none';
   loginForm.style.display = 'block';
   registerError.textContent = '';
+});
+
+// Возврат на стартовую страницу
+backToStartFromLogin.addEventListener('click', () => {
+  showStartPage();
+});
+
+backToStartFromRegister.addEventListener('click', () => {
+  showStartPage();
 });
 
 // Обработка логина
@@ -110,6 +192,7 @@ registerBtn.addEventListener('click', async () => {
 
 // Запуск игры после авторизации
 function startGame(tokenData: { access_token: string; user_id: string; username: string }) {
+  startPage.style.display = 'none';
   loginContainer.style.display = 'none';
   gameContainer.style.display = 'block';
 
@@ -123,7 +206,8 @@ function startGame(tokenData: { access_token: string; user_id: string; username:
     } finally {
       gameContainer.innerHTML = '';
       gameContainer.style.display = 'none';
-      loginContainer.style.display = 'block';
+      // Возвращаемся на стартовую страницу (не очищаем токен, чтобы можно было продолжить)
+      showStartPage();
       (window as any).gameToken = null;
       (window as any).gameUserId = null;
       (window as any).gameUsername = null;
@@ -153,3 +237,22 @@ function startGame(tokenData: { access_token: string; user_id: string; username:
 
   game = new Phaser.Game(config);
 }
+
+// Инициализация при загрузке страницы
+function init() {
+  // Показываем стартовую страницу
+  showStartPage();
+  
+  // Проверяем наличие токена для отображения кнопки "Продолжить"
+  // Но не запускаем игру автоматически - пользователь сам выберет
+  if (AuthService.hasToken()) {
+    // Токен есть, показываем кнопку "Продолжить"
+    continueBtn.style.display = 'block';
+    logoutBtn.style.display = 'block';
+    loginStartBtn.style.display = 'none';
+    registerStartBtn.style.display = 'none';
+  }
+}
+
+// Инициализируем при загрузке страницы
+init();

@@ -1,0 +1,10 @@
+Generic single-database configuration for Alembic.
+
+Команды (выполнять из папки backend):
+
+  alembic revision --autogenerate -m "описание"  # создать новую миграцию
+  alembic upgrade head                          # применить все миграции
+  alembic upgrade +1                            # применить следующую миграцию
+  alembic downgrade -1                          # откатить одну миграцию
+  alembic current                              # текущая ревизия
+  alembic history                              # история миграций

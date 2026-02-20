@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from main import ConnectionManager
+from api.websocket_handlers import ConnectionManager
 
 
 class TestConnectionManager:
