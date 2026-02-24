@@ -41,6 +41,62 @@
       #game-container {
         display: none;
       }
+      #profile-page {
+        background: #2a2a2a;
+        padding: 30px;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        max-width: 500px;
+        width: 100%;
+        display: none;
+      }
+      #profile-page h2 {
+        color: #fff;
+        margin-bottom: 20px;
+      }
+      #profile-page .profile-section {
+        margin-bottom: 20px;
+        color: #ccc;
+      }
+      #profile-page .profile-section strong {
+        color: #00ff00;
+      }
+      #profile-page .bonus-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        max-height: 200px;
+        overflow-y: auto;
+      }
+      #profile-page .bonus-list li {
+        padding: 8px 0;
+        border-bottom: 1px solid #444;
+        color: #ccc;
+        font-size: 14px;
+      }
+      #profile-page .profile-nav {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-top: 25px;
+      }
+      #profile-page .profile-nav button {
+        margin-top: 0;
+      }
+      #profile-page .profile-nav button.secondary {
+        background: #444;
+        color: #fff;
+      }
+      #profile-page .profile-nav button.secondary:hover {
+        background: #555;
+      }
+      #profile-page .profile-nav button.danger {
+        background: #ff4444;
+        color: #fff;
+      }
+      #profile-page .profile-nav button.danger:hover {
+        background: #cc0000;
+      }
       .start-buttons {
         display: flex;
         flex-direction: column;
@@ -139,9 +195,26 @@
         <p style="color: #ccc; margin-bottom: 20px;">Добро пожаловать в игру!</p>
         <div class="start-buttons">
           <button id="continue-btn" style="display: none;">Продолжить игру</button>
+          <button id="profile-start-btn" class="secondary" style="display: none;">Профиль</button>
           <button id="login-start-btn">Войти</button>
           <button id="register-start-btn" class="secondary">Зарегистрироваться</button>
           <button id="logout-btn" class="danger" style="display: none;">Выйти</button>
+        </div>
+      </div>
+      <div id="profile-page">
+        <h2>Профиль</h2>
+        <div class="profile-section">
+          <p><strong>Игрок:</strong> <span id="profile-username">—</span></p>
+          <p><strong>Баланс очков:</strong> <span id="profile-balance">0</span></p>
+        </div>
+        <div class="profile-section">
+          <strong>Последние собранные бонусы</strong>
+          <ul id="profile-bonus-list" class="bonus-list"></ul>
+        </div>
+        <div class="profile-nav">
+          <button id="profile-to-main-btn" class="secondary">На главную</button>
+          <button id="profile-to-game-btn" class="secondary" style="display: none;">В игру</button>
+          <button id="profile-logout-btn" class="danger">Выйти</button>
         </div>
       </div>
       <div id="login-container">

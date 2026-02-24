@@ -8,11 +8,13 @@ const API_URL = 'http://localhost:8000';
 const startPage = document.getElementById('start-page')!;
 const loginContainer = document.getElementById('login-container')!;
 const gameContainer = document.getElementById('game-container')!;
+const profilePage = document.getElementById('profile-page')!;
 const loginForm = document.getElementById('login-form')!;
 const registerForm = document.getElementById('register-form')!;
 
 // Элементы стартовой страницы
 const continueBtn = document.getElementById('continue-btn') as HTMLButtonElement;
+const profileStartBtn = document.getElementById('profile-start-btn') as HTMLButtonElement;
 const loginStartBtn = document.getElementById('login-start-btn') as HTMLButtonElement;
 const registerStartBtn = document.getElementById('register-start-btn') as HTMLButtonElement;
 const logoutBtn = document.getElementById('logout-btn') as HTMLButtonElement;
@@ -33,17 +35,28 @@ const switchToLogin = document.getElementById('switch-to-login')!;
 const backToStartFromLogin = document.getElementById('back-to-start-from-login')!;
 const backToStartFromRegister = document.getElementById('back-to-start-from-register')!;
 
+const profileUsername = document.getElementById('profile-username')!;
+const profileBalance = document.getElementById('profile-balance')!;
+const profileBonusList = document.getElementById('profile-bonus-list')!;
+const profileToMainBtn = document.getElementById('profile-to-main-btn') as HTMLButtonElement;
+const profileToGameBtn = document.getElementById('profile-to-game-btn') as HTMLButtonElement;
+const profileLogoutBtn = document.getElementById('profile-logout-btn') as HTMLButtonElement;
+
 let game: Phaser.Game | null = null;
+/** Открыли профиль из игры — по «На главную» вернёмся в игру, иначе на старт */
+let profileOpenedFromGame = false;
 
 // Показываем стартовую страницу
 function showStartPage() {
   startPage.style.display = 'block';
   loginContainer.style.display = 'none';
   gameContainer.style.display = 'none';
-  
-  // Проверяем, залогинен ли пользователь
+  profilePage.style.display = 'none';
+  profileOpenedFromGame = false;
+
   const isLoggedIn = AuthService.hasToken();
   continueBtn.style.display = isLoggedIn ? 'block' : 'none';
+  profileStartBtn.style.display = isLoggedIn ? 'block' : 'none';
   logoutBtn.style.display = isLoggedIn ? 'block' : 'none';
   loginStartBtn.style.display = isLoggedIn ? 'none' : 'block';
   registerStartBtn.style.display = isLoggedIn ? 'none' : 'block';
@@ -53,10 +66,52 @@ function showStartPage() {
 function showLoginForm() {
   startPage.style.display = 'none';
   loginContainer.style.display = 'block';
+  profilePage.style.display = 'none';
   loginForm.style.display = 'block';
   registerForm.style.display = 'none';
   loginError.textContent = '';
   registerError.textContent = '';
+}
+
+// Показываем страницу профиля (с главной или из игры)
+async function showProfilePage(fromGame: boolean = false) {
+  profileOpenedFromGame = fromGame;
+  startPage.style.display = 'none';
+  loginContainer.style.display = 'none';
+  gameContainer.style.display = 'none';
+  profilePage.style.display = 'block';
+  profileToGameBtn.style.display = fromGame ? 'block' : 'none';
+
+  const token = AuthService.getToken();
+  if (!token) {
+    showStartPage();
+    return;
+  }
+  try {
+    const res = await fetch(`${API_URL}/api/me/profile`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      showStartPage();
+      return;
+    }
+    const data = await res.json();
+    profileUsername.textContent = data.username || '—';
+    profileBalance.textContent = String(data.balance_points ?? 0);
+    const list = data.recent_bonus_collections || [];
+    profileBonusList.innerHTML = list.length === 0
+      ? '<li style="color:#666">Пока нет собранных бонусов</li>'
+      : list.map((b: { points: number; bonus_type: number; collected_at: string | null }) => {
+          const date = b.collected_at ? new Date(b.collected_at).toLocaleString() : '—';
+          return `<li>+${b.points} (тип ${b.bonus_type}) — ${date}</li>`;
+        }).join('');
+  } catch {
+    showStartPage();
+  }
+}
+
+function hideProfilePage() {
+  profilePage.style.display = 'none';
 }
 
 // Показываем форму регистрации
@@ -96,6 +151,26 @@ registerStartBtn.addEventListener('click', () => {
 
 logoutBtn.addEventListener('click', () => {
   AuthService.clearToken();
+  showStartPage();
+});
+
+profileStartBtn.addEventListener('click', () => {
+  showProfilePage(false);
+});
+
+profileToMainBtn.addEventListener('click', () => {
+  showStartPage();
+});
+
+profileToGameBtn.addEventListener('click', () => {
+  hideProfilePage();
+  gameContainer.style.display = 'block';
+  profileToGameBtn.style.display = 'none';
+});
+
+profileLogoutBtn.addEventListener('click', () => {
+  AuthService.clearToken();
+  profileOpenedFromGame = false;
   showStartPage();
 });
 
@@ -194,9 +269,14 @@ registerBtn.addEventListener('click', async () => {
 function startGame(tokenData: { access_token: string; user_id: string; username: string }) {
   startPage.style.display = 'none';
   loginContainer.style.display = 'none';
+  profilePage.style.display = 'none';
   gameContainer.style.display = 'block';
 
-  // коллбек, который вызовет сцена при выходе
+  (window as any).goToProfile = () => {
+    gameContainer.style.display = 'none';
+    showProfilePage(true);
+  };
+
   (window as any).exitToLogin = () => {
     try {
       if (game) {

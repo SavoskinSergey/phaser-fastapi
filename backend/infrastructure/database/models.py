@@ -41,3 +41,26 @@ class SessionModel(Base):
     created_at = Column(DateTime(timezone=False), default=datetime.utcnow, nullable=False)
 
     user = relationship("UserModel", back_populates="sessions")
+
+
+class BonusModel(Base):
+    """Бонус на карте (тип = очки: 100, 200, 500)."""
+    __tablename__ = "bonuses"
+
+    id = Column(String(36), primary_key=True, default=_uuid_str)
+    type = Column(Integer, nullable=False)  # 100 | 200 | 500
+    tile_x = Column(Integer, nullable=False)
+    tile_y = Column(Integer, nullable=False)
+    created_at = Column(DateTime(timezone=False), default=datetime.utcnow, nullable=False)
+
+
+class BonusCollectionModel(Base):
+    """Лог: кто какой бонус собрал."""
+    __tablename__ = "bonus_collections"
+
+    id = Column(String(36), primary_key=True, default=_uuid_str)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    bonus_id = Column(String(36), ForeignKey("bonuses.id", ondelete="SET NULL"), nullable=True, index=True)
+    points = Column(Integer, nullable=False)
+    bonus_type = Column(Integer, nullable=False)  # 100 | 200 | 500
+    collected_at = Column(DateTime(timezone=False), default=datetime.utcnow, nullable=False)

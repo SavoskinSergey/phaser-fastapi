@@ -8,12 +8,14 @@ from api.routes import auth_router
 from api.websocket_handlers import websocket_game_endpoint
 from infrastructure.database.connection import engine, Base
 from infrastructure.database import models  # noqa: F401 - register models with Base
+from api.websocket_handlers import load_or_create_initial_bonuses
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: create DB tables
+    # Startup: create DB tables and load bonuses from DB (or create initial)
     Base.metadata.create_all(bind=engine)
+    load_or_create_initial_bonuses()
     yield
     # Shutdown: nothing for now
 

@@ -20,6 +20,14 @@ class UserService:
         user.set_location(x, y)
         return self._user_repo.save(user)
 
+    def add_points(self, user_id: UUID, points: int) -> User | None:
+        """Добавляет очки к балансу игрока."""
+        user = self._user_repo.get_by_id(user_id)
+        if not user:
+            return None
+        object.__setattr__(user, "balance_points", user.balance_points + points)
+        return self._user_repo.save(user)
+
     def update_balances(self, user_id: UUID, balance_points: int | None = None, balance_mana: int | None = None) -> User | None:
         user = self._user_repo.get_by_id(user_id)
         if not user:

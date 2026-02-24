@@ -26,6 +26,7 @@ const mockAdd = {
     setPosition: vi.fn(),
     setText: vi.fn(),
     setStyle: vi.fn(),
+    setDepth: vi.fn().mockReturnThis(),
     setInteractive: vi.fn().mockReturnThis(),
     on: vi.fn(), // Phaser EventEmitter — нужен для exitButton.on('pointerover', ...)
     destroy: vi.fn(),
@@ -94,16 +95,18 @@ describe('GameScene', () => {
     };
     (global as any).window = mockWindow;
 
-    // Mock WebSocket (в jsdom нет WebSocket.OPEN — без него update() выходит по условию readyState !== WebSocket.OPEN)
-    const WebSocketMock = vi.fn().mockImplementation(() => ({
-      readyState: 1,
-      send: vi.fn(),
-      close: vi.fn(),
-      onopen: null,
-      onerror: null,
-      onclose: null,
-      onmessage: null,
-    }));
+    // Mock WebSocket (обычная функция, чтобы работало new WebSocket(); стрелочная не конструктор)
+    const WebSocketMock = vi.fn().mockImplementation(function (this: any) {
+      return {
+        readyState: 1,
+        send: vi.fn(),
+        close: vi.fn(),
+        onopen: null,
+        onerror: null,
+        onclose: null,
+        onmessage: null,
+      };
+    });
     (WebSocketMock as any).OPEN = 1;
     global.WebSocket = WebSocketMock as any;
 
@@ -151,7 +154,7 @@ describe('GameScene', () => {
     it('should setup keyboard controls', () => {
       gameScene.create();
 
-      expect(mockInput.keyboard.addKey).toHaveBeenCalledTimes(4);
+      expect(mockInput.keyboard.addKey).toHaveBeenCalledTimes(5); // W, A, S, D, Space
     });
 
     it('should connect to WebSocket with token', () => {
@@ -175,7 +178,9 @@ describe('GameScene', () => {
         onmessage: null,
       };
 
-      (global.WebSocket as any).mockImplementation(() => mockWs);
+      (global.WebSocket as any).mockImplementation(function (this: any) {
+        return mockWs;
+      });
 
       gameScene.create();
 
@@ -209,7 +214,9 @@ describe('GameScene', () => {
         onmessage: null,
       };
 
-      (global.WebSocket as any).mockImplementation(() => mockWs);
+      (global.WebSocket as any).mockImplementation(function (this: any) {
+        return mockWs;
+      });
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       gameScene.create();
@@ -255,6 +262,7 @@ describe('GameScene', () => {
         right: { isDown: false },
         up: { isDown: false },
         down: { isDown: false },
+        space: { isDown: false },
       };
       (gameScene as any).moveCooldown = 0;
 
@@ -278,6 +286,7 @@ describe('GameScene', () => {
         right: { isDown: false },
         up: { isDown: false },
         down: { isDown: false },
+        space: { isDown: false },
       };
       (gameScene as any).moveCooldown = 100; // Still in cooldown
 

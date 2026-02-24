@@ -1,13 +1,23 @@
 import Phaser from 'phaser';
 
+const TILE_SIZE = 56;
+
 interface PlayerState {
   x: number;
   y: number;
   username?: string;
+  balance_points?: number;
 }
 
 interface PlayersState {
   [playerId: string]: PlayerState;
+}
+
+interface BonusItem {
+  id: string;
+  type: number; // 100 | 200 | 500
+  tile_x: number;
+  tile_y: number;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -17,17 +27,24 @@ export class GameScene extends Phaser.Scene {
   private mySprite?: Phaser.GameObjects.Sprite;
   private myLabel?: Phaser.GameObjects.Text;
   private exitButton?: Phaser.GameObjects.Text;
+  private profileButton?: Phaser.GameObjects.Text;
+  private refreshButton?: Phaser.GameObjects.Text;
   private groundTile?: Phaser.GameObjects.TileSprite;
   private gridGraphics?: Phaser.GameObjects.Graphics;
+  private bonusGraphics?: Phaser.GameObjects.Graphics;
+  private balanceLabel?: Phaser.GameObjects.Text;
   private otherPlayers: Map<string, { sprite: Phaser.GameObjects.Sprite; label: Phaser.GameObjects.Text }> = new Map();
   private keys!: {
     up: Phaser.Input.Keyboard.Key;
     down: Phaser.Input.Keyboard.Key;
     left: Phaser.Input.Keyboard.Key;
     right: Phaser.Input.Keyboard.Key;
+    space: Phaser.Input.Keyboard.Key;
   };
   private moveCooldown: number = 0;
   private readonly MOVE_COOLDOWN_TIME = 50; // мс между отправками движения
+  private collectBonusCooldown: number = 0;
+  private readonly COLLECT_BONUS_COOLDOWN = 400; // мс между нажатиями пробела
   private hasExited: boolean = false;
   private currentDirection: 'idle' | 'up' | 'down' | 'left' | 'right' = 'idle';
 
@@ -198,8 +215,20 @@ export class GameScene extends Phaser.Scene {
       up: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.W),
       down: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.S),
       left: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.A),
-      right: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.D)
+      right: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.D),
+      space: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
     };
+
+    // Графика для бонусов (кружки на карте)
+    this.bonusGraphics = this.add.graphics();
+    this.bonusGraphics.setDepth(0.5); // Между землёй и персонажами
+
+    // Баланс очков игрока
+    this.balanceLabel = this.add.text(10, 32, 'Очки: 0', {
+      fontSize: '16px',
+      color: '#ffffff',
+    });
+    this.balanceLabel.setDepth(10);
 
     // Подключение к WebSocket с токеном
     const wsUrl = `ws://localhost:8000/ws/game?token=${encodeURIComponent(token)}`;
@@ -219,9 +248,16 @@ export class GameScene extends Phaser.Scene {
 
     this.ws.onmessage = (event) => {
       try {
-        const msg = JSON.parse(event.data) as { type: string; players: PlayersState };
+        const msg = JSON.parse(event.data) as { type: string; players: PlayersState; bonuses?: BonusItem[] };
         if (msg.type === 'state') {
           this.syncPlayers(msg.players);
+          if (msg.bonuses) {
+            this.syncBonuses(msg.bonuses);
+          }
+          const me = msg.players[this.playerId];
+          if (me?.balance_points !== undefined && this.balanceLabel) {
+            this.balanceLabel.setText(`Очки: ${me.balance_points}`);
+          }
         }
       } catch (error) {
         console.error('Ошибка парсинга сообщения:', error);
@@ -229,9 +265,54 @@ export class GameScene extends Phaser.Scene {
     };
 
     // Инструкции на экране
-    this.add.text(10, 10, 'WASD - движение', {
+    this.add.text(10, 10, 'WASD - движение, Пробел - собрать бонус', {
       fontSize: '16px',
       color: '#ffffff'
+    });
+
+    // Кнопка "Обновить" — ручная синхронизация игроков и бонусов
+    this.refreshButton = this.add.text(520, 10, 'Обновить', {
+      fontSize: '16px',
+      color: '#ffffff',
+      backgroundColor: '#444444',
+      padding: { left: 10, right: 10, top: 6, bottom: 6 }
+    })
+      .setOrigin(0, 0)
+      .setInteractive({ useHandCursor: true });
+    this.refreshButton.on('pointerover', () => {
+      this.refreshButton?.setStyle({ backgroundColor: '#666666' });
+    });
+    this.refreshButton.on('pointerout', () => {
+      this.refreshButton?.setStyle({ backgroundColor: '#444444' });
+    });
+    this.refreshButton.on('pointerdown', () => {
+      try {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ type: 'sync' }));
+        }
+      } catch (e) {
+        console.error('Ошибка синхронизации:', e);
+      }
+    });
+
+    // Кнопка "Профиль"
+    this.profileButton = this.add.text(620, 10, 'Профиль', {
+      fontSize: '16px',
+      color: '#ffffff',
+      backgroundColor: '#444444',
+      padding: { left: 10, right: 10, top: 6, bottom: 6 }
+    })
+      .setOrigin(0, 0)
+      .setInteractive({ useHandCursor: true });
+    this.profileButton.on('pointerover', () => {
+      this.profileButton?.setStyle({ backgroundColor: '#666666' });
+    });
+    this.profileButton.on('pointerout', () => {
+      this.profileButton?.setStyle({ backgroundColor: '#444444' });
+    });
+    this.profileButton.on('pointerdown', () => {
+      const goToProfile = (window as any).goToProfile;
+      if (typeof goToProfile === 'function') goToProfile();
     });
 
     // Кнопка "Выйти" (в сцене)
@@ -318,7 +399,22 @@ export class GameScene extends Phaser.Scene {
       } catch (error) {
         console.error('Ошибка отправки движения:', error);
       }
-    } else if (this.currentDirection !== 'idle' && this.mySprite) {
+    }
+
+    // Сбор бонуса по пробелу (в той же клетке, что и бонус)
+    if (this.collectBonusCooldown > 0) {
+      this.collectBonusCooldown -= delta;
+    }
+    if (this.keys.space.isDown && this.collectBonusCooldown <= 0) {
+      try {
+        this.ws.send(JSON.stringify({ type: 'collect_bonus' }));
+        this.collectBonusCooldown = this.COLLECT_BONUS_COOLDOWN;
+      } catch (error) {
+        console.error('Ошибка отправки collect_bonus:', error);
+      }
+    }
+
+    if (dx === 0 && dy === 0 && this.currentDirection !== 'idle' && this.mySprite) {
       // Если не двигаемся, переключаемся на idle
       this.currentDirection = 'idle';
       if (this.mySprite.anims.currentAnim?.key !== 'mario_idle') {
@@ -331,6 +427,21 @@ export class GameScene extends Phaser.Scene {
         }
       }
     }
+  }
+
+  private syncBonuses(bonuses: BonusItem[]) {
+    if (!this.bonusGraphics) return;
+    this.bonusGraphics.clear();
+    const radius = 18;
+    bonuses.forEach((b) => {
+      const x = b.tile_x * TILE_SIZE + TILE_SIZE / 2;
+      const y = b.tile_y * TILE_SIZE + TILE_SIZE / 2;
+      const color = b.type === 100 ? 0x00ff00 : b.type === 200 ? 0xffff00 : 0xff0000; // зелёный, жёлтый, красный
+      this.bonusGraphics!.fillStyle(color, 0.9);
+      this.bonusGraphics!.fillCircle(x, y, radius);
+      this.bonusGraphics!.lineStyle(2, 0x000000, 0.3);
+      this.bonusGraphics!.strokeCircle(x, y, radius);
+    });
   }
 
   private syncPlayers(players: PlayersState) {

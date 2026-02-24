@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 
-from api.schemas import UserRegister, UserLogin, Token, UserMe
+from api.schemas import UserRegister, UserLogin, Token, UserMe, ProfileResponse
 from api.dependencies import get_auth_service, get_current_user
+from infrastructure.database import get_db
 from application.services import AuthService
 from domain.entities.user import User
+from infrastructure.repositories import SqlAlchemyBonusRepository
 
 router = APIRouter(prefix="/api", tags=["auth"])
 
@@ -52,4 +55,26 @@ def me(current_user: User = Depends(get_current_user)):
         location_x=current_user.location_x,
         location_y=current_user.location_y,
         last_login=current_user.last_login.isoformat() if current_user.last_login else None,
+    )
+
+
+@router.get("/me/profile", response_model=ProfileResponse)
+def profile(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    bonus_repo = SqlAlchemyBonusRepository(db)
+    recent = bonus_repo.get_recent_collections_by_user(str(current_user.id), limit=20)
+    return ProfileResponse(
+        user_id=str(current_user.id),
+        username=current_user.username,
+        balance_points=current_user.balance_points,
+        balance_mana=current_user.balance_mana,
+        location_x=current_user.location_x,
+        location_y=current_user.location_y,
+        last_login=current_user.last_login.isoformat() if current_user.last_login else None,
+        recent_bonus_collections=[
+            {"points": c["points"], "bonus_type": c["bonus_type"], "collected_at": c["collected_at"]}
+            for c in recent
+        ],
     )
