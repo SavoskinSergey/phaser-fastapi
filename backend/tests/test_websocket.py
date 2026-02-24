@@ -66,6 +66,8 @@ class TestWebSocketConnection:
         user_id = reg.json()["user_id"]
         with client.websocket_connect(f"/ws/game?token={token}") as websocket:
             initial_data = websocket.receive_json()
+            assert initial_data["type"] == "state"
+            websocket.receive_json()  # inventory
             initial_x = initial_data["players"][user_id]["x"]
             initial_y = initial_data["players"][user_id]["y"]
             websocket.send_json({"type": "move", "dx": 10, "dy": 5})
@@ -86,11 +88,13 @@ class TestWebSocketConnection:
         token = reg.json()["access_token"]
         user_id = reg.json()["user_id"]
         with client.websocket_connect(f"/ws/game?token={token}") as websocket:
-            websocket.receive_json()
+            websocket.receive_json()  # state
+            websocket.receive_json()  # inventory
             websocket.send_json({"type": "move", "dx": 5, "dy": 0})
-            websocket.receive_json()
+            websocket.receive_json()  # state
             websocket.send_json({"type": "move", "dx": 0, "dy": 10})
             final_data = websocket.receive_json()
+            assert final_data["type"] == "state"
             player = final_data["players"][user_id]
             assert player["x"] == 105
             assert player["y"] == 110
@@ -108,9 +112,10 @@ class TestWebSocketConnection:
         token = reg.json()["access_token"]
         user_id = reg.json()["user_id"]
         with client.websocket_connect(f"/ws/game?token={token}") as websocket:
-            websocket.receive_json()
+            websocket.receive_json()  # state
+            websocket.receive_json()  # inventory
             websocket.send_json({"type": "move", "dx": 50, "dy": 30})
-            websocket.receive_json()
+            websocket.receive_json()  # state
             websocket.send_json({"type": "exit", "x": 150, "y": 130})
             try:
                 websocket.receive_json()
@@ -137,9 +142,10 @@ class TestWebSocketConnection:
         token = reg.json()["access_token"]
         user_id = reg.json()["user_id"]
         with client.websocket_connect(f"/ws/game?token={token}") as websocket:
-            websocket.receive_json()
+            websocket.receive_json()  # state
+            websocket.receive_json()  # inventory
             websocket.send_json({"type": "move", "dx": 25, "dy": 15})
-            websocket.receive_json()
+            websocket.receive_json()  # state
             websocket.send_json({"type": "exit", "x": 125, "y": 115})
             try:
                 websocket.receive_json()
@@ -148,6 +154,7 @@ class TestWebSocketConnection:
         time.sleep(0.1)
         with client.websocket_connect(f"/ws/game?token={token}") as websocket:
             data = websocket.receive_json()
+            assert data["type"] == "state"
             player = data["players"][user_id]
             assert player["x"] == 125
             assert player["y"] == 115
@@ -175,10 +182,13 @@ class TestWebSocketConnection:
         user_id2 = r2.json()["user_id"]
         with client.websocket_connect(f"/ws/game?token={token1}") as ws1:
             data1 = ws1.receive_json()
+            assert data1["type"] == "state"
+            ws1.receive_json()  # inventory
             assert user_id1 in data1["players"]
             with client.websocket_connect(f"/ws/game?token={token2}") as ws2:
-                update1 = ws1.receive_json()
-                update2 = ws2.receive_json()
+                update1 = ws1.receive_json()  # state (broadcast when ws2 connected)
+                update2 = ws2.receive_json()  # state
+                ws2.receive_json()  # inventory
                 assert user_id1 in update1["players"]
                 assert user_id2 in update1["players"]
                 assert user_id1 in update2["players"]
@@ -186,5 +196,82 @@ class TestWebSocketConnection:
                 ws1.send_json({"type": "move", "dx": 20, "dy": 10})
                 move_update1 = ws1.receive_json()
                 move_update2 = ws2.receive_json()
+                assert move_update1["type"] == "state"
+                assert move_update2["type"] == "state"
                 assert move_update1["players"][user_id1]["x"] == 120
                 assert move_update2["players"][user_id1]["x"] == 120
+
+
+class TestWebSocketStateAndInventory:
+    """Состояние с бонусами/заданиями и инвентарь."""
+
+    def test_state_includes_bonuses_and_tasks(self, client: TestClient):
+        reg = client.post(
+            "/api/register",
+            json={
+                "username": "stateuser",
+                "email": "stateuser@example.com",
+                "password": "password123",
+            },
+        )
+        token = reg.json()["access_token"]
+        with client.websocket_connect(f"/ws/game?token={token}") as websocket:
+            data = websocket.receive_json()
+            assert data["type"] == "state"
+            assert "bonuses" in data
+            assert "tasks" in data
+            assert isinstance(data["bonuses"], list)
+            assert isinstance(data["tasks"], list)
+            inv = websocket.receive_json()
+            assert inv["type"] == "inventory"
+            assert "items" in inv
+            assert "1" in inv["items"]
+            assert "2" in inv["items"]
+            assert "3" in inv["items"]
+
+    def test_sync_returns_state_with_tasks(self, client: TestClient):
+        reg = client.post(
+            "/api/register",
+            json={
+                "username": "syncuser",
+                "email": "syncuser@example.com",
+                "password": "password123",
+            },
+        )
+        token = reg.json()["access_token"]
+        with client.websocket_connect(f"/ws/game?token={token}") as websocket:
+            websocket.receive_json()
+            websocket.receive_json()
+            websocket.send_json({"type": "sync"})
+            data = websocket.receive_json()
+            assert data["type"] == "state"
+            assert "tasks" in data
+
+
+class TestWebSocketSubmitTask:
+    """Сдача задания по tile_x, tile_y."""
+
+    def test_submit_task_wrong_tile_returns_error(self, client: TestClient):
+        reg = client.post(
+            "/api/register",
+            json={
+                "username": "submituser",
+                "email": "submituser@example.com",
+                "password": "password123",
+            },
+        )
+        token = reg.json()["access_token"]
+        with client.websocket_connect(f"/ws/game?token={token}") as websocket:
+            websocket.receive_json()
+            websocket.receive_json()
+            websocket.send_json({
+                "type": "submit_task",
+                "tile_x": 999,
+                "tile_y": 999,
+                "type_1": 1,
+                "type_2": 1,
+                "type_3": 1,
+            })
+            data = websocket.receive_json()
+            assert data["type"] == "task_error"
+            assert "detail" in data

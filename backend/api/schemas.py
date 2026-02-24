@@ -35,6 +35,13 @@ class BonusCollectionItem(BaseModel):
     collected_at: str | None
 
 
+class TaskCompletionItem(BaseModel):
+    reward_points: int
+    reward_item_1: int
+    reward_item_2: int
+    completed_at: str | None
+
+
 class ProfileResponse(BaseModel):
     user_id: str
     username: str
@@ -44,3 +51,22 @@ class ProfileResponse(BaseModel):
     location_y: float
     last_login: str | None
     recent_bonus_collections: list[BonusCollectionItem]
+    recent_task_completions: list[TaskCompletionItem]
+
+
+class InventoryResponse(BaseModel):
+    items: dict[str, int]  # {"1": qty, "2": qty, "3": qty}
+
+
+class BuyItemRequest(BaseModel):
+    item_type: int  # 1 | 2 | 3
+
+
+class TaskResponse(BaseModel):
+    id: str
+    required_type_1: int
+    required_type_2: int
+    required_type_3: int
+    reward_points: int
+    reward_item_1: int
+    reward_item_2: int

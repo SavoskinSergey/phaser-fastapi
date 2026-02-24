@@ -19,9 +19,18 @@ db_conn.engine = test_engine
 db_conn.SessionLocal = TestSessionLocal
 
 from infrastructure.database.connection import Base, get_db
-from infrastructure.database.models import UserModel, SessionModel, BonusModel, BonusCollectionModel
+from infrastructure.database.models import (
+    UserModel,
+    SessionModel,
+    BonusModel,
+    BonusCollectionModel,
+    UserInventoryModel,
+    UserTaskModel,
+    MapTaskModel,
+    TaskCompletionModel,
+)
 from main import app
-from api.websocket_handlers import players_state, bonuses_state, ws_manager
+from api.websocket_handlers import players_state, bonuses_state, tasks_state, ws_manager
 
 
 @pytest.fixture(scope="function")
@@ -36,6 +45,10 @@ def db_session():
 
 
 def _reset_db(session):
+    session.execute(delete(TaskCompletionModel))
+    session.execute(delete(MapTaskModel))
+    session.execute(delete(UserTaskModel))
+    session.execute(delete(UserInventoryModel))
     session.execute(delete(BonusCollectionModel))
     session.execute(delete(BonusModel))
     session.execute(delete(SessionModel))
@@ -48,11 +61,13 @@ def reset_state(db_session):
     """Очищает состояние перед каждым тестом."""
     players_state.clear()
     bonuses_state.clear()
+    tasks_state.clear()
     ws_manager.active_connections.clear()
     _reset_db(db_session)
     yield
     players_state.clear()
     bonuses_state.clear()
+    tasks_state.clear()
     ws_manager.active_connections.clear()
 
 
