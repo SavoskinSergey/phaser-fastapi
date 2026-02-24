@@ -73,6 +73,8 @@ vi.mock('phaser', () => ({
           A: 'A',
           S: 'S',
           D: 'D',
+          SPACE: 'SPACE',
+          E: 'E',
         },
       },
     },
@@ -154,7 +156,7 @@ describe('GameScene', () => {
     it('should setup keyboard controls', () => {
       gameScene.create();
 
-      expect(mockInput.keyboard.addKey).toHaveBeenCalledTimes(5); // W, A, S, D, Space
+      expect(mockInput.keyboard.addKey).toHaveBeenCalledTimes(6); // W, A, S, D, Space, E
     });
 
     it('should connect to WebSocket with token', () => {
@@ -263,6 +265,7 @@ describe('GameScene', () => {
         up: { isDown: false },
         down: { isDown: false },
         space: { isDown: false },
+        e: { isDown: false },
       };
       (gameScene as any).moveCooldown = 0;
 
@@ -287,6 +290,7 @@ describe('GameScene', () => {
         up: { isDown: false },
         down: { isDown: false },
         space: { isDown: false },
+        e: { isDown: false },
       };
       (gameScene as any).moveCooldown = 100; // Still in cooldown
 

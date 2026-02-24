@@ -20,6 +20,18 @@ interface BonusItem {
   tile_y: number;
 }
 
+interface MapTaskItem {
+  id: string;
+  tile_x: number;
+  tile_y: number;
+  required_type_1: number;
+  required_type_2: number;
+  required_type_3: number;
+  reward_points: number;
+  reward_item_1: number;
+  reward_item_2: number;
+}
+
 export class GameScene extends Phaser.Scene {
   private ws?: WebSocket;
   private playerId: string = '';
@@ -32,6 +44,7 @@ export class GameScene extends Phaser.Scene {
   private groundTile?: Phaser.GameObjects.TileSprite;
   private gridGraphics?: Phaser.GameObjects.Graphics;
   private bonusGraphics?: Phaser.GameObjects.Graphics;
+  private taskGraphics?: Phaser.GameObjects.Graphics;
   private balanceLabel?: Phaser.GameObjects.Text;
   private otherPlayers: Map<string, { sprite: Phaser.GameObjects.Sprite; label: Phaser.GameObjects.Text }> = new Map();
   private keys!: {
@@ -40,13 +53,18 @@ export class GameScene extends Phaser.Scene {
     left: Phaser.Input.Keyboard.Key;
     right: Phaser.Input.Keyboard.Key;
     space: Phaser.Input.Keyboard.Key;
+    e: Phaser.Input.Keyboard.Key;
   };
+  private taskModalCooldown: number = 0;
+  private readonly TASK_MODAL_COOLDOWN_MS = 500;
   private moveCooldown: number = 0;
-  private readonly MOVE_COOLDOWN_TIME = 50; // мс между отправками движения
-  private collectBonusCooldown: number = 0;
-  private readonly COLLECT_BONUS_COOLDOWN = 400; // мс между нажатиями пробела
+  private readonly MOVE_COOLDOWN_TIME = 50;
   private hasExited: boolean = false;
   private currentDirection: 'idle' | 'up' | 'down' | 'left' | 'right' = 'idle';
+  private tasksState: MapTaskItem[] = [];
+  private bonusesState: BonusItem[] = [];
+  private inventoryState: Record<string, number> = {};
+  private inventoryButton?: Phaser.GameObjects.Text;
 
   constructor() {
     super('GameScene');
@@ -217,11 +235,15 @@ export class GameScene extends Phaser.Scene {
       left: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.A),
       right: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.D),
       space: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
+      e: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E),
     };
 
     // Графика для бонусов (кружки на карте)
     this.bonusGraphics = this.add.graphics();
-    this.bonusGraphics.setDepth(0.5); // Между землёй и персонажами
+    this.bonusGraphics.setDepth(0.5);
+    // Графика для заданий на карте (квадраты)
+    this.taskGraphics = this.add.graphics();
+    this.taskGraphics.setDepth(0.5);
 
     // Баланс очков игрока
     this.balanceLabel = this.add.text(10, 32, 'Очки: 0', {
@@ -248,15 +270,45 @@ export class GameScene extends Phaser.Scene {
 
     this.ws.onmessage = (event) => {
       try {
-        const msg = JSON.parse(event.data) as { type: string; players: PlayersState; bonuses?: BonusItem[] };
+        const msg = JSON.parse(event.data) as {
+          type: string;
+          players?: PlayersState;
+          bonuses?: BonusItem[];
+          tasks?: MapTaskItem[];
+          items?: Record<string, number>;
+          task_completed?: { reward_points?: number; reward_item_1?: number; reward_item_2?: number };
+          task_error?: string;
+          detail?: string;
+        };
         if (msg.type === 'state') {
-          this.syncPlayers(msg.players);
+          this.syncPlayers(msg.players!);
           if (msg.bonuses) {
+            this.bonusesState = msg.bonuses;
             this.syncBonuses(msg.bonuses);
           }
-          const me = msg.players[this.playerId];
+          if (msg.tasks) this.syncTasks(msg.tasks);
+          const me = msg.players![this.playerId];
           if (me?.balance_points !== undefined && this.balanceLabel) {
             this.balanceLabel.setText(`Очки: ${me.balance_points}`);
+          }
+        } else if (msg.type === 'inventory') {
+          this.inventoryState = msg.items || {};
+          if (msg.task_completed) {
+            const closeTaskModal = (window as any).closeTaskModal;
+            if (typeof closeTaskModal === 'function') closeTaskModal(msg.task_completed);
+          }
+          if (msg.task_error != null || msg.detail != null) {
+            const errEl = document.getElementById('task-error-text');
+            if (errEl) {
+              errEl.textContent = (msg as any).task_error || (msg as any).detail || 'Ошибка';
+              errEl.style.display = 'block';
+            }
+          }
+        } else if (msg.type === 'task_error') {
+          const errEl = document.getElementById('task-error-text');
+          if (errEl) {
+            errEl.textContent = (msg as any).detail || 'Ошибка';
+            errEl.style.display = 'block';
           }
         }
       } catch (error) {
@@ -264,10 +316,29 @@ export class GameScene extends Phaser.Scene {
       }
     };
 
+    (window as any).gameSubmitTask = () => this.submitTask();
+    (window as any).__currentTask = null;
+
     // Инструкции на экране
-    this.add.text(10, 10, 'WASD - движение, Пробел - собрать бонус', {
+    this.add.text(10, 10, 'WASD - движение, Пробел - бонус или задание', {
       fontSize: '16px',
       color: '#ffffff'
+    });
+
+    // Кнопка "Инвентарь"
+    this.inventoryButton = this.add.text(400, 10, 'Инвентарь', {
+      fontSize: '16px',
+      color: '#ffffff',
+      backgroundColor: '#444444',
+      padding: { left: 10, right: 10, top: 6, bottom: 6 }
+    })
+      .setOrigin(0, 0)
+      .setInteractive({ useHandCursor: true });
+    this.inventoryButton.on('pointerover', () => this.inventoryButton?.setStyle({ backgroundColor: '#666666' }));
+    this.inventoryButton.on('pointerout', () => this.inventoryButton?.setStyle({ backgroundColor: '#444444' }));
+    this.inventoryButton.on('pointerdown', () => {
+      const goToInventory = (window as any).goToInventory;
+      if (typeof goToInventory === 'function') goToInventory();
     });
 
     // Кнопка "Обновить" — ручная синхронизация игроков и бонусов
@@ -401,16 +472,24 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Сбор бонуса по пробелу (в той же клетке, что и бонус)
-    if (this.collectBonusCooldown > 0) {
-      this.collectBonusCooldown -= delta;
-    }
-    if (this.keys.space.isDown && this.collectBonusCooldown <= 0) {
-      try {
-        this.ws.send(JSON.stringify({ type: 'collect_bonus' }));
-        this.collectBonusCooldown = this.COLLECT_BONUS_COOLDOWN;
-      } catch (error) {
-        console.error('Ошибка отправки collect_bonus:', error);
+    // Пробел — либо задание (окно), либо сбор бонуса
+    if (this.taskModalCooldown > 0) this.taskModalCooldown -= delta;
+    if (this.keys.space.isDown && this.taskModalCooldown <= 0 && this.mySprite) {
+      const tile_x = Math.floor(this.mySprite.x / TILE_SIZE);
+      const tile_y = Math.floor(this.mySprite.y / TILE_SIZE);
+      const taskAtTile = this.tasksState.find((t) => t.tile_x === tile_x && t.tile_y === tile_y);
+      const bonusAtTile = this.bonusesState.some((b) => b.tile_x === tile_x && b.tile_y === tile_y);
+      if (taskAtTile) {
+        this.taskModalCooldown = this.TASK_MODAL_COOLDOWN_MS;
+        const openTaskModal = (window as any).openTaskModal;
+        if (typeof openTaskModal === 'function') openTaskModal({ ...taskAtTile, tile_x, tile_y });
+      } else if (bonusAtTile) {
+        this.taskModalCooldown = this.TASK_MODAL_COOLDOWN_MS;
+        try {
+          this.ws!.send(JSON.stringify({ type: 'collect_bonus' }));
+        } catch (error) {
+          console.error('Ошибка отправки collect_bonus:', error);
+        }
       }
     }
 
@@ -429,6 +508,24 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  submitTask(): void {
+    const task = (window as any).__currentTask as (MapTaskItem & { tile_x: number; tile_y: number }) | null;
+    if (!task || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    document.getElementById('task-error-text')?.setAttribute('style', 'display: none');
+    try {
+      this.ws.send(JSON.stringify({
+        type: 'submit_task',
+        tile_x: task.tile_x,
+        tile_y: task.tile_y,
+        type_1: task.required_type_1,
+        type_2: task.required_type_2,
+        type_3: task.required_type_3,
+      }));
+    } catch (e) {
+      console.error('Ошибка сдачи задания:', e);
+    }
+  }
+
   private syncBonuses(bonuses: BonusItem[]) {
     if (!this.bonusGraphics) return;
     this.bonusGraphics.clear();
@@ -436,11 +533,26 @@ export class GameScene extends Phaser.Scene {
     bonuses.forEach((b) => {
       const x = b.tile_x * TILE_SIZE + TILE_SIZE / 2;
       const y = b.tile_y * TILE_SIZE + TILE_SIZE / 2;
-      const color = b.type === 100 ? 0x00ff00 : b.type === 200 ? 0xffff00 : 0xff0000; // зелёный, жёлтый, красный
+      const color = b.type === 100 ? 0x00ff00 : b.type === 200 ? 0xffff00 : 0xff0000;
       this.bonusGraphics!.fillStyle(color, 0.9);
       this.bonusGraphics!.fillCircle(x, y, radius);
       this.bonusGraphics!.lineStyle(2, 0x000000, 0.3);
       this.bonusGraphics!.strokeCircle(x, y, radius);
+    });
+  }
+
+  private syncTasks(tasks: MapTaskItem[]) {
+    this.tasksState = tasks;
+    if (!this.taskGraphics) return;
+    this.taskGraphics.clear();
+    const size = 20;
+    tasks.forEach((t) => {
+      const x = t.tile_x * TILE_SIZE + TILE_SIZE / 2;
+      const y = t.tile_y * TILE_SIZE + TILE_SIZE / 2;
+      this.taskGraphics!.fillStyle(0x0088ff, 0.9);
+      this.taskGraphics!.fillRect(x - size / 2, y - size / 2, size, size);
+      this.taskGraphics!.lineStyle(2, 0x004466, 0.5);
+      this.taskGraphics!.strokeRect(x - size / 2, y - size / 2, size, size);
     });
   }
 
