@@ -1,8 +1,12 @@
+import os
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, delete
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
+
+# В тестах игра стартует сразу (без ожидания 10 сек)
+os.environ["TESTING"] = "1"
 
 # Тестовая БД (SQLite in-memory) — одно соединение для всех, иначе таблицы не видны
 TEST_DATABASE_URL = "sqlite:///:memory:"
@@ -30,7 +34,7 @@ from infrastructure.database.models import (
     TaskCompletionModel,
 )
 from main import app
-from api.websocket_handlers import players_state, bonuses_state, tasks_state, ws_manager
+from api import game_sessions as game_sessions_module
 
 
 @pytest.fixture(scope="function")
@@ -59,16 +63,10 @@ def _reset_db(session):
 @pytest.fixture(autouse=True)
 def reset_state(db_session):
     """Очищает состояние перед каждым тестом."""
-    players_state.clear()
-    bonuses_state.clear()
-    tasks_state.clear()
-    ws_manager.active_connections.clear()
+    game_sessions_module.game_sessions.clear()
     _reset_db(db_session)
     yield
-    players_state.clear()
-    bonuses_state.clear()
-    tasks_state.clear()
-    ws_manager.active_connections.clear()
+    game_sessions_module.game_sessions.clear()
 
 
 def override_get_db():

@@ -27,6 +27,7 @@ const mockAdd = {
     setText: vi.fn(),
     setStyle: vi.fn(),
     setDepth: vi.fn().mockReturnThis(),
+    setVisible: vi.fn().mockReturnThis(),
     setInteractive: vi.fn().mockReturnThis(),
     on: vi.fn(), // Phaser EventEmitter — нужен для exitButton.on('pointerover', ...)
     destroy: vi.fn(),
@@ -88,11 +89,12 @@ describe('GameScene', () => {
   let mockWindow: any;
 
   beforeEach(() => {
-    // Mock window object
+    // Mock window object (sessionId нужен для подключения к игре)
     mockWindow = {
       gameToken: 'test-token',
       gameUserId: 'user123',
       gameUsername: 'testuser',
+      gameSessionId: 'test-session-id',
       exitToLogin: vi.fn(),
     };
     (global as any).window = mockWindow;
@@ -140,7 +142,7 @@ describe('GameScene', () => {
       gameScene.create();
 
       expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Токен или user_id не найдены')
+        expect.stringContaining('Токен, user_id или session_id не найдены')
       );
 
       consoleSpy.mockRestore();
@@ -159,11 +161,14 @@ describe('GameScene', () => {
       expect(mockInput.keyboard.addKey).toHaveBeenCalledTimes(6); // W, A, S, D, Space, E
     });
 
-    it('should connect to WebSocket with token', () => {
+    it('should connect to WebSocket with token and session_id', () => {
       gameScene.create();
 
       expect(global.WebSocket).toHaveBeenCalledWith(
         expect.stringContaining('ws://localhost:8000/ws/game?token=test-token')
+      );
+      expect(global.WebSocket).toHaveBeenCalledWith(
+        expect.stringContaining('session_id=test-session-id')
       );
     });
   });
@@ -259,6 +264,7 @@ describe('GameScene', () => {
       };
       (gameScene as any).ws = mockWs;
       (gameScene as any).mySprite = spriteWithAnims;
+      (gameScene as any).gameInProgress = true; // иначе update() выходит до отправки move
       (gameScene as any).keys = {
         left: { isDown: true },
         right: { isDown: false },

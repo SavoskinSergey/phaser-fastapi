@@ -4,18 +4,15 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
-from api.routes import auth_router
+from api.routes import auth_router, game_router
 from api.websocket_handlers import websocket_game_endpoint
 from infrastructure.database.connection import engine, Base
 from infrastructure.database import models  # noqa: F401 - register models with Base
-from api.websocket_handlers import load_or_create_initial_bonuses, load_or_create_initial_tasks
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
-    load_or_create_initial_bonuses()
-    load_or_create_initial_tasks()
     yield
     # Shutdown: nothing for now
 
@@ -31,6 +28,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(game_router)
 
 
 @app.get("/health")

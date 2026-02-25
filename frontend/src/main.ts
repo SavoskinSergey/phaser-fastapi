@@ -13,7 +13,7 @@ const loginForm = document.getElementById('login-form')!;
 const registerForm = document.getElementById('register-form')!;
 
 // Элементы стартовой страницы
-const continueBtn = document.getElementById('continue-btn') as HTMLButtonElement;
+const playBtn = document.getElementById('play-btn') as HTMLButtonElement;
 const profileStartBtn = document.getElementById('profile-start-btn') as HTMLButtonElement;
 const loginStartBtn = document.getElementById('login-start-btn') as HTMLButtonElement;
 const registerStartBtn = document.getElementById('register-start-btn') as HTMLButtonElement;
@@ -74,7 +74,7 @@ function showStartPage() {
   inventoryOpenedFromGame = false;
 
   const isLoggedIn = AuthService.hasToken();
-  continueBtn.style.display = isLoggedIn ? 'block' : 'none';
+  playBtn.style.display = isLoggedIn ? 'block' : 'none';
   profileStartBtn.style.display = isLoggedIn ? 'block' : 'none';
   logoutBtn.style.display = isLoggedIn ? 'block' : 'none';
   loginStartBtn.style.display = isLoggedIn ? 'none' : 'block';
@@ -233,17 +233,30 @@ function showRegisterForm() {
 }
 
 // Обработчики кнопок стартовой страницы
-continueBtn.addEventListener('click', async () => {
+playBtn.addEventListener('click', async () => {
   try {
     const tokenData = await AuthService.validateToken();
-    if (tokenData) {
-      startGame(tokenData);
-    } else {
-      // Токен невалиден, показываем форму входа
+    if (!tokenData) {
       showLoginForm();
+      return;
     }
+    const token = AuthService.getToken();
+    if (!token) {
+      showLoginForm();
+      return;
+    }
+    const res = await fetch(`${API_URL}/api/game/join_or_create`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      showStartPage();
+      return;
+    }
+    const data = await res.json();
+    startGame(tokenData, data.session_id);
   } catch (error) {
-    console.error('Ошибка при продолжении:', error);
+    console.error('Ошибка при входе в игру:', error);
     AuthService.clearToken();
     showLoginForm();
   }
@@ -350,8 +363,8 @@ loginBtn.addEventListener('click', async () => {
   loginError.textContent = '';
 
   try {
-    const tokenData = await AuthService.login(username, password);
-    startGame(tokenData);
+    await AuthService.login(username, password);
+    showStartPage();
   } catch (error: any) {
     loginError.textContent = error.message || 'Ошибка входа';
   } finally {
@@ -379,8 +392,8 @@ registerBtn.addEventListener('click', async () => {
   registerError.textContent = '';
 
   try {
-    const tokenData = await AuthService.register(username, email, password);
-    startGame(tokenData);
+    await AuthService.register(username, email, password);
+    showStartPage();
   } catch (error: any) {
     registerError.textContent = error.message || 'Ошибка регистрации';
   } finally {
@@ -405,8 +418,8 @@ registerBtn.addEventListener('click', async () => {
   });
 });
 
-// Запуск игры после авторизации
-function startGame(tokenData: { access_token: string; user_id: string; username: string }) {
+// Запуск игры после авторизации (sessionId от join_or_create)
+function startGame(tokenData: { access_token: string; user_id: string; username: string }, sessionId: string) {
   startPage.style.display = 'none';
   loginContainer.style.display = 'none';
   profilePage.style.display = 'none';
@@ -478,10 +491,10 @@ function startGame(tokenData: { access_token: string; user_id: string; username:
     }
   };
 
-  // Передаем токен в сцену через глобальную переменную
   (window as any).gameToken = tokenData.access_token;
   (window as any).gameUserId = tokenData.user_id;
   (window as any).gameUsername = tokenData.username;
+  (window as any).gameSessionId = sessionId;
 
   game = new Phaser.Game(config);
 }
@@ -494,8 +507,7 @@ function init() {
   // Проверяем наличие токена для отображения кнопки "Продолжить"
   // Но не запускаем игру автоматически - пользователь сам выберет
   if (AuthService.hasToken()) {
-    // Токен есть, показываем кнопку "Продолжить"
-    continueBtn.style.display = 'block';
+    playBtn.style.display = 'block';
     logoutBtn.style.display = 'block';
     loginStartBtn.style.display = 'none';
     registerStartBtn.style.display = 'none';

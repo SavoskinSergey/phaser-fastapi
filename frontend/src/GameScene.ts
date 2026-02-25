@@ -65,6 +65,13 @@ export class GameScene extends Phaser.Scene {
   private bonusesState: BonusItem[] = [];
   private inventoryState: Record<string, number> = {};
   private inventoryButton?: Phaser.GameObjects.Text;
+  private sessionId: string = '';
+  private lobbyText?: Phaser.GameObjects.Text;
+  private gameEndsAt: number = 0;
+  private gameEndedText?: Phaser.GameObjects.Text;
+  private gameInProgress: boolean = false;
+  private currentScore: number = 0;
+  private playerUsernames: Record<string, string> = {};
 
   constructor() {
     super('GameScene');
@@ -187,9 +194,10 @@ export class GameScene extends Phaser.Scene {
     const token = (window as any).gameToken;
     this.playerId = (window as any).gameUserId;
     this.username = (window as any).gameUsername || 'Player';
+    this.sessionId = (window as any).gameSessionId || '';
 
-    if (!token || !this.playerId) {
-      console.error('Токен или user_id не найдены');
+    if (!token || !this.playerId || !this.sessionId) {
+      console.error('Токен, user_id или session_id не найдены');
       return;
     }
 
@@ -252,9 +260,19 @@ export class GameScene extends Phaser.Scene {
     });
     this.balanceLabel.setDepth(10);
 
-    // Подключение к WebSocket с токеном
-    const wsUrl = `ws://localhost:8000/ws/game?token=${encodeURIComponent(token)}`;
+    const wsUrl = `ws://localhost:8000/ws/game?token=${encodeURIComponent(token)}&session_id=${encodeURIComponent(this.sessionId)}`;
     this.ws = new WebSocket(wsUrl);
+
+    this.lobbyText = this.add.text(400, 300, 'Ожидание игроков...', {
+      fontSize: '20px',
+      color: '#ffffff',
+      align: 'center',
+    }).setOrigin(0.5).setDepth(100);
+    this.gameEndedText = this.add.text(400, 300, '', {
+      fontSize: '24px',
+      color: '#00ff00',
+      align: 'center',
+    }).setOrigin(0.5).setDepth(101).setVisible(false);
 
     this.ws.onopen = () => {
       console.log('WebSocket подключен');
@@ -275,21 +293,59 @@ export class GameScene extends Phaser.Scene {
           players?: PlayersState;
           bonuses?: BonusItem[];
           tasks?: MapTaskItem[];
+          scores?: Record<string, number>;
+          ends_at?: number;
           items?: Record<string, number>;
           task_completed?: { reward_points?: number; reward_item_1?: number; reward_item_2?: number };
           task_error?: string;
           detail?: string;
+          players_count?: number;
+          player_usernames?: Record<string, string>;
+          countdown_seconds?: number;
+          registration_closed?: boolean;
+          winner_id?: string;
+          winner_username?: string;
+          duration_seconds?: number;
         };
-        if (msg.type === 'state') {
+        if (msg.type === 'lobby') {
+          if (msg.player_usernames) this.playerUsernames = { ...this.playerUsernames, ...msg.player_usernames };
+          const count = (msg.players && msg.players.length) || 0;
+          const names = msg.player_usernames || this.playerUsernames;
+          const namesStr = msg.players?.map((id: string) => names[id] || id).join(', ') || '—';
+          const sec = msg.countdown_seconds ?? 0;
+          const text = sec > 0
+            ? `Игроки (${count}/4): ${namesStr}\nСтарт через ${sec} сек...`
+            : `Ожидание игроков (${count}/4). Нужен ещё один для старта.\n${namesStr}`;
+          if (this.lobbyText) this.lobbyText.setText(text);
+        } else if (msg.type === 'game_started') {
+          this.gameInProgress = true;
+          this.gameEndsAt = (msg.ends_at ?? 0) * 1000;
+          if (this.lobbyText) this.lobbyText.setVisible(false);
+        } else if (msg.type === 'state') {
+          if (msg.ends_at) {
+            this.gameInProgress = true;
+            this.gameEndsAt = msg.ends_at * 1000;
+            if (this.lobbyText) this.lobbyText.setVisible(false);
+          }
           this.syncPlayers(msg.players!);
           if (msg.bonuses) {
             this.bonusesState = msg.bonuses;
             this.syncBonuses(msg.bonuses);
           }
           if (msg.tasks) this.syncTasks(msg.tasks);
-          const me = msg.players![this.playerId];
-          if (me?.balance_points !== undefined && this.balanceLabel) {
-            this.balanceLabel.setText(`Очки: ${me.balance_points}`);
+          if (msg.scores && this.balanceLabel) {
+            this.currentScore = msg.scores[this.playerId] ?? 0;
+            this.balanceLabel.setText(`Очки: ${this.currentScore}`);
+          }
+        } else if (msg.type === 'game_ended') {
+          this.gameInProgress = false;
+          if (this.lobbyText) this.lobbyText.setVisible(false);
+          const winner = msg.winner_username ?? '—';
+          const scores = msg.scores || {};
+          const lines = Object.entries(scores).map(([id, pts]) => `${this.playerUsernames[id] || id}: ${pts}`).join('\n');
+          if (this.gameEndedText) {
+            this.gameEndedText.setText(`Игра окончена!\nПобедитель: ${winner}\n\n${lines}`);
+            this.gameEndedText.setVisible(true);
           }
         } else if (msg.type === 'inventory') {
           this.inventoryState = msg.items || {};
@@ -408,7 +464,14 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(time: number, delta: number) {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.mySprite) return;
+    if (this.gameInProgress && this.gameEndsAt > 0 && this.balanceLabel) {
+      const remaining = Math.max(0, Math.ceil((this.gameEndsAt - Date.now()) / 1000));
+      const m = Math.floor(remaining / 60);
+      const s = remaining % 60;
+      const timeStr = `${m}:${s.toString().padStart(2, '0')}`;
+      this.balanceLabel.setText(`Очки: ${this.currentScore} | ${timeStr}`);
+    }
+    if (!this.gameInProgress || !this.ws || this.ws.readyState !== WebSocket.OPEN || !this.mySprite) return;
 
     // Проверка кулдауна для отправки движения
     if (this.moveCooldown > 0) {

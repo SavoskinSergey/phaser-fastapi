@@ -1,6 +1,6 @@
 import logging
+import os
 import random
-import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Any
 from uuid import UUID
@@ -19,137 +19,33 @@ from infrastructure.repositories import (
     SqlAlchemyMapTaskRepository,
     SqlAlchemyTaskCompletionRepository,
 )
+from api.game_sessions import (
+    get_session,
+    add_connection,
+    remove_connection,
+    broadcast_session,
+    _add_bonus_to_session,
+    _add_task_to_session,
+    _start_game,
+    TILE_SIZE,
+)
 
 logger = logging.getLogger(__name__)
-
-TILE_SIZE = 56
-MAP_TILES_X = 20
-MAP_TILES_Y = 15
-BONUS_TYPES = [100, 200, 500]  # очки за тип бонуса (зелёный, жёлтый, красный)
-BONUS_COUNT = 10
-# Тайлы, на которых могут появляться бонусы (включительно)
-BONUS_TILE_X_MIN, BONUS_TILE_X_MAX = 1, 11
-BONUS_TILE_Y_MIN, BONUS_TILE_Y_MAX = 1, 9
-TASK_COUNT = 10
-
-
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: Dict[str, WebSocket] = {}
-
-    async def connect(self, user_id: str, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections[user_id] = websocket
-
-    def disconnect(self, user_id: str):
-        self.active_connections.pop(user_id, None)
-
-    async def broadcast(self, message: dict):
-        for ws in list(self.active_connections.values()):
-            try:
-                await ws.send_json(message)
-            except Exception:
-                pass
-
-
-# In-memory state for real-time game
-players_state: Dict[str, dict] = {}
-bonuses_state: List[Dict[str, Any]] = []
-tasks_state: List[Dict[str, Any]] = []  # задания на карте, общие для всех
-ws_manager = ConnectionManager()
-
-
-def _occupied_tiles() -> set[tuple[int, int]]:
-    """Тайлы, занятые бонусами и заданиями (задание и бонус не могут на одном тайле)."""
-    out = set()
-    for b in bonuses_state:
-        out.add((b["tile_x"], b["tile_y"]))
-    for t in tasks_state:
-        out.add((t["tile_x"], t["tile_y"]))
-    return out
-
-
-def _random_free_tile(occupied: set[tuple[int, int]]) -> tuple[int, int] | None:
-    """Случайный свободный тайл в зоне x 1..11, y 1..9."""
-    candidates = [
-        (x, y)
-        for x in range(BONUS_TILE_X_MIN, BONUS_TILE_X_MAX + 1)
-        for y in range(BONUS_TILE_Y_MIN, BONUS_TILE_Y_MAX + 1)
-        if (x, y) not in occupied
-    ]
-    return random.choice(candidates) if candidates else None
-
-
-def _add_random_bonus(bonus_repo: SqlAlchemyBonusRepository) -> Dict[str, Any] | None:
-    """Добавляет один бонус на свободный тайл (не занятый бонусами и заданиями)."""
-    occupied = _occupied_tiles()
-    tile = _random_free_tile(occupied)
-    if not tile:
-        return None
-    tile_x, tile_y = tile
-    bonus_type = random.choice(BONUS_TYPES)
-    bonus = bonus_repo.create(bonus_type, tile_x, tile_y)
-    bonuses_state.append(bonus)
-    return bonus
-
-
-def ensure_bonuses(bonus_repo: SqlAlchemyBonusRepository) -> None:
-    if not bonuses_state:
-        for b in bonus_repo.get_all():
-            bonuses_state.append(b)
-    while len(bonuses_state) < BONUS_COUNT:
-        if _add_random_bonus(bonus_repo) is None:
-            break
-
-
-def _add_random_task(map_task_repo: SqlAlchemyMapTaskRepository) -> Dict[str, Any] | None:
-    """Добавляет одно задание на свободный тайл."""
-    occupied = _occupied_tiles()
-    tile = _random_free_tile(occupied)
-    if not tile:
-        return None
-    tile_x, tile_y = tile
-    task = map_task_repo.create(tile_x, tile_y)
-    tasks_state.append(task)
-    return task
-
-
-def ensure_tasks(map_task_repo: SqlAlchemyMapTaskRepository) -> None:
-    """Гарантирует TASK_COUNT заданий на карте (общих для всех)."""
-    if not tasks_state:
-        for t in map_task_repo.get_all():
-            tasks_state.append(t)
-    while len(tasks_state) < TASK_COUNT:
-        if _add_random_task(map_task_repo) is None:
-            break
 
 
 def get_db_session():
     return SessionLocal()
 
 
-def load_or_create_initial_bonuses() -> None:
-    db = SessionLocal()
-    try:
-        bonus_repo = SqlAlchemyBonusRepository(db)
-        ensure_bonuses(bonus_repo)
-    finally:
-        db.close()
-
-
-def load_or_create_initial_tasks() -> None:
-    db = SessionLocal()
-    try:
-        map_task_repo = SqlAlchemyMapTaskRepository(db)
-        ensure_tasks(map_task_repo)
-    finally:
-        db.close()
-
-
 async def websocket_game_endpoint(websocket: WebSocket):
     token = websocket.query_params.get("token")
+    session_id = websocket.query_params.get("session_id")
     if not token:
         logger.warning("WebSocket /ws/game: connection rejected, no token")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+    if not session_id:
+        logger.warning("WebSocket /ws/game: connection rejected, no session_id")
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
@@ -160,7 +56,6 @@ async def websocket_game_endpoint(websocket: WebSocket):
         auth_service = AuthService(user_repo, session_repo)
         user_service = UserService(user_repo)
 
-        # Проверяем сессию в БД (и не истёкшую); fallback на JWT для совместимости с тестами/кэшем
         user = auth_service.get_user_by_session_token(token)
         if not user:
             user = auth_service.get_user_by_token(token)
@@ -169,83 +64,118 @@ async def websocket_game_endpoint(websocket: WebSocket):
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
 
-        # Продлеваем сессию на время игры (если есть в БД), чтобы не разрывать соединение через 30 мин
         new_expires = datetime.utcnow() + timedelta(minutes=settings.access_token_expire_minutes)
         session_repo.extend_expiry(token, new_expires)
 
         user_id_str = str(user.id)
         username = user.username
+        start_x, start_y = 100.0, 100.0
 
-        # Начальная позиция из БД
-        start_x = user.location_x
-        start_y = user.location_y
+        game_session = await add_connection(session_id, user_id_str, websocket, start_x, start_y, username)
+        if not game_session:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
 
-        bonus_repo = SqlAlchemyBonusRepository(db)
-        map_task_repo = SqlAlchemyMapTaskRepository(db)
-        task_completion_repo = SqlAlchemyTaskCompletionRepository(db)
-        ensure_bonuses(bonus_repo)
-        ensure_tasks(map_task_repo)
+        await websocket.accept()
+
+        # В тестах: один игрок в сессии — стартуем игру при подключении по WebSocket
+        if os.environ.get("TESTING") == "1" and game_session.status == "starting" and len(game_session.players) == 1:
+            await _start_game(game_session)
+
         inv_repo = SqlAlchemyInventoryRepository(db)
         inv_repo.grant_random_on_enter(user_id_str)
-        await ws_manager.connect(user_id_str, websocket)
-        players_state[user_id_str] = {
-            "x": start_x,
-            "y": start_y,
-            "username": username,
-            "balance_points": user.balance_points,
-        }
+        bonus_repo = SqlAlchemyBonusRepository(db)
+        task_completion_repo = SqlAlchemyTaskCompletionRepository(db)
 
-        await ws_manager.broadcast({
-            "type": "state",
-            "players": players_state,
-            "bonuses": bonuses_state,
-            "tasks": tasks_state,
-        })
-        items = inv_repo.get_by_user(user_id_str)
-        await websocket.send_json({"type": "inventory", "items": {str(k): v for k, v in items.items()}})
+        if game_session.status in ("waiting", "starting"):
+            await websocket.send_json({
+                "type": "lobby",
+                "players": game_session.players,
+                "player_usernames": game_session.player_usernames,
+                "countdown_seconds": game_session.countdown_seconds_left,
+                "registration_closed": game_session.registration_closed,
+            })
+        elif game_session.status == "in_progress":
+            await websocket.send_json({
+                "type": "state",
+                "players": game_session.players_state,
+                "bonuses": game_session.bonuses_state,
+                "tasks": game_session.tasks_state,
+                "scores": game_session.scores,
+                "ends_at": game_session.ends_at,
+            })
+            items = inv_repo.get_by_user(user_id_str)
+            await websocket.send_json({"type": "inventory", "items": {str(k): v for k, v in items.items()}})
+        elif game_session.status == "finished":
+            await websocket.send_json({
+                "type": "game_ended",
+                "winner_id": max(game_session.scores, key=game_session.scores.get) if game_session.scores else None,
+                "winner_username": game_session.player_usernames.get(max(game_session.scores, key=game_session.scores.get), "—") if game_session.scores else "—",
+                "scores": game_session.scores,
+            })
 
         try:
             while True:
                 data = await websocket.receive_json()
 
+                if game_session.status != "in_progress":
+                    if data.get("type") == "exit":
+                        remove_connection(session_id, user_id_str)
+                        await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
+                        return
+                    continue
+
                 if data.get("type") == "move":
-                    player = players_state.get(user_id_str)
+                    player = game_session.players_state.get(user_id_str)
                     if player:
                         player["x"] += data.get("dx", 0)
                         player["y"] += data.get("dy", 0)
-                        players_state[user_id_str] = player
-                        await ws_manager.broadcast({"type": "state", "players": players_state, "bonuses": bonuses_state, "tasks": tasks_state})
+                        game_session.players_state[user_id_str] = player
+                    await broadcast_session(game_session, {
+                        "type": "state",
+                        "players": game_session.players_state,
+                        "bonuses": game_session.bonuses_state,
+                        "tasks": game_session.tasks_state,
+                        "scores": game_session.scores,
+                        "ends_at": game_session.ends_at,
+                    })
 
                 elif data.get("type") == "collect_bonus":
-                    # Игрок нажал пробел: собираем бонус, если стоит в той же клетке
-                    player = players_state.get(user_id_str)
+                    player = game_session.players_state.get(user_id_str)
                     if not player:
                         continue
                     tile_x = int(player["x"] // TILE_SIZE)
                     tile_y = int(player["y"] // TILE_SIZE)
                     bonus_idx = None
-                    for i, b in enumerate(bonuses_state):
+                    for i, b in enumerate(game_session.bonuses_state):
                         if b["tile_x"] == tile_x and b["tile_y"] == tile_y:
                             bonus_idx = i
                             break
                     if bonus_idx is not None:
-                        bonus = bonuses_state.pop(bonus_idx)
+                        bonus = game_session.bonuses_state.pop(bonus_idx)
                         points = bonus["type"]
-                        bonus_repo.log_collection(user_id_str, bonus.get("id"), points, bonus["type"])
-                        bonus_repo.delete_by_id(bonus["id"])
-                        updated_user = user_service.add_points(UUID(user_id_str), points)
-                        if updated_user:
-                            player["balance_points"] = updated_user.balance_points
-                        _add_random_bonus(bonus_repo)
-                        # Синхронизация бонусов и игроков всем клиентам при активации бонуса
-                        await ws_manager.broadcast({"type": "state", "players": players_state, "bonuses": bonuses_state, "tasks": tasks_state})
+                        bonus_repo.log_collection(user_id_str, None, points, bonus["type"])
+                        game_session.scores[user_id_str] = game_session.scores.get(user_id_str, 0) + points
+                        if user_id_str in game_session.players_state:
+                            game_session.players_state[user_id_str]["score"] = game_session.scores[user_id_str]
+                        _add_bonus_to_session(game_session)
+                        await broadcast_session(game_session, {
+                            "type": "state",
+                            "players": game_session.players_state,
+                            "bonuses": game_session.bonuses_state,
+                            "tasks": game_session.tasks_state,
+                            "scores": game_session.scores,
+                            "ends_at": game_session.ends_at,
+                        })
 
                 elif data.get("type") == "sync":
                     await websocket.send_json({
                         "type": "state",
-                        "players": players_state,
-                        "bonuses": bonuses_state,
-                        "tasks": tasks_state,
+                        "players": game_session.players_state,
+                        "bonuses": game_session.bonuses_state,
+                        "tasks": game_session.tasks_state,
+                        "scores": game_session.scores,
+                        "ends_at": game_session.ends_at,
                     })
                     items = inv_repo.get_by_user(user_id_str)
                     await websocket.send_json({"type": "inventory", "items": {str(k): v for k, v in items.items()}})
@@ -258,7 +188,7 @@ async def websocket_game_endpoint(websocket: WebSocket):
                     t3 = int(data.get("type_3", 0))
                     task_at_tile = None
                     task_idx = None
-                    for i, t in enumerate(tasks_state):
+                    for i, t in enumerate(game_session.tasks_state):
                         if t["tile_x"] == tile_x and t["tile_y"] == tile_y:
                             task_at_tile = t
                             task_idx = i
@@ -273,55 +203,48 @@ async def websocket_game_endpoint(websocket: WebSocket):
                     if not inv_repo.has_at_least(user_id_str, required):
                         await websocket.send_json({"type": "task_error", "detail": "Недостаточно элементов в инвентаре"})
                         continue
-                    tasks_state.pop(task_idx)
-                    map_task_repo.delete_by_tile(tile_x, tile_y)
+                    game_session.tasks_state.pop(task_idx)
                     inv_repo.deduct(user_id_str, required)
-                    user_service.add_points(UUID(user_id_str), task_at_tile["reward_points"])
+                    reward_pts = task_at_tile["reward_points"]
+                    game_session.scores[user_id_str] = game_session.scores.get(user_id_str, 0) + reward_pts
                     inv_repo.add_quantity(user_id_str, task_at_tile["reward_item_1"], 1)
                     inv_repo.add_quantity(user_id_str, task_at_tile["reward_item_2"], 1)
-                    task_completion_repo.log(
-                        user_id_str,
-                        task_at_tile["reward_points"],
-                        task_at_tile["reward_item_1"],
-                        task_at_tile["reward_item_2"],
-                    )
-                    _add_random_task(map_task_repo)
-                    player = players_state.get(user_id_str)
-                    if player:
-                        u = user_service.get_by_id(UUID(user_id_str))
-                        if u:
-                            player["balance_points"] = u.balance_points
+                    task_completion_repo.log(user_id_str, reward_pts, task_at_tile["reward_item_1"], task_at_tile["reward_item_2"])
+                    _add_task_to_session(game_session, {
+                        1: random.randint(0, 2),
+                        2: random.randint(0, 2),
+                        3: random.randint(0, 2),
+                        "reward_points": task_at_tile.get("reward_points", 10),
+                        "reward_item_1": task_at_tile.get("reward_item_1", 1),
+                        "reward_item_2": task_at_tile.get("reward_item_2", 2),
+                    })
+                    if user_id_str in game_session.players_state:
+                        game_session.players_state[user_id_str]["score"] = game_session.scores[user_id_str]
                     items = inv_repo.get_by_user(user_id_str)
                     await websocket.send_json({
                         "type": "inventory",
                         "items": {str(k): v for k, v in items.items()},
                         "task_completed": {
-                            "reward_points": task_at_tile["reward_points"],
+                            "reward_points": reward_pts,
                             "reward_item_1": task_at_tile["reward_item_1"],
                             "reward_item_2": task_at_tile["reward_item_2"],
                         },
                     })
-                    await ws_manager.broadcast({"type": "state", "players": players_state, "bonuses": bonuses_state, "tasks": tasks_state})
+                    await broadcast_session(game_session, {
+                        "type": "state",
+                        "players": game_session.players_state,
+                        "bonuses": game_session.bonuses_state,
+                        "tasks": game_session.tasks_state,
+                        "scores": game_session.scores,
+                        "ends_at": game_session.ends_at,
+                    })
 
                 elif data.get("type") == "exit":
-                    player = players_state.get(user_id_str) or {}
-                    x = data.get("x", player.get("x", start_x))
-                    y = data.get("y", player.get("y", start_y))
-                    # Сохраняем позицию в БД
-                    user_service.update_location(UUID(user_id_str), x, y)
-
-                    ws_manager.disconnect(user_id_str)
-                    players_state.pop(user_id_str, None)
-                    await ws_manager.broadcast({"type": "state", "players": players_state, "bonuses": bonuses_state, "tasks": tasks_state})
+                    remove_connection(session_id, user_id_str)
                     await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
                     return
+
         except WebSocketDisconnect:
-            player = players_state.get(user_id_str)
-            if player:
-                x, y = player.get("x", start_x), player.get("y", start_y)
-                user_service.update_location(UUID(user_id_str), x, y)
-            ws_manager.disconnect(user_id_str)
-            players_state.pop(user_id_str, None)
-            await ws_manager.broadcast({"type": "state", "players": players_state, "bonuses": bonuses_state, "tasks": tasks_state})
+            remove_connection(session_id, user_id_str)
     finally:
         db.close()
