@@ -24,12 +24,12 @@ interface MapTaskItem {
   id: string;
   tile_x: number;
   tile_y: number;
+  level: number; // 1 | 2 | 3
   required_type_1: number;
   required_type_2: number;
   required_type_3: number;
   reward_points: number;
-  reward_item_1: number;
-  reward_item_2: number;
+  reward_ingredient_count: number;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -45,7 +45,8 @@ export class GameScene extends Phaser.Scene {
   private gridGraphics?: Phaser.GameObjects.Graphics;
   private bonusSprites: Phaser.GameObjects.Image[] = [];
   private bonusGraphicsFallback?: Phaser.GameObjects.Graphics;
-  private taskGraphics?: Phaser.GameObjects.Graphics;
+  private taskSprites: Phaser.GameObjects.Image[] = [];
+  private taskGraphicsFallback?: Phaser.GameObjects.Graphics;
   private balanceLabel?: Phaser.GameObjects.Text;
   private coinLabel?: Phaser.GameObjects.Text;
   private sessionCoins: number = 0;
@@ -104,6 +105,11 @@ export class GameScene extends Phaser.Scene {
     this.load.image('apple', '/assets/apple.png');
     this.load.image('orange', '/assets/orange.png');
     this.load.image('pineapple', '/assets/pineapple.png');
+
+    // Задания по уровням сложности
+    this.load.image('task_1', '/assets/task_1.png');
+    this.load.image('task_2', '/assets/task_2.png');
+    this.load.image('task_3', '/assets/task_3.png');
 
     // Создаем текстуру земли для фона
     this.createGroundTexture();
@@ -254,9 +260,6 @@ export class GameScene extends Phaser.Scene {
       e: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E),
     };
 
-    // Графика для заданий на карте (квадраты)
-    this.taskGraphics = this.add.graphics();
-    this.taskGraphics.setDepth(0.5);
 
     // Баланс очков и монет
     this.balanceLabel = this.add.text(10, 32, 'Очки: 0', {
@@ -607,16 +610,21 @@ export class GameScene extends Phaser.Scene {
 
   submitTask(): void {
     const task = (window as any).__currentTask as (MapTaskItem & { tile_x: number; tile_y: number }) | null;
+    const transferred = (window as any).getTransferredForTask as (() => Record<number, number>) | undefined;
     if (!task || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const t = typeof transferred === 'function' ? transferred() : null;
+    const type1 = t ? (t[1] ?? 0) : task.required_type_1;
+    const type2 = t ? (t[2] ?? 0) : task.required_type_2;
+    const type3 = t ? (t[3] ?? 0) : task.required_type_3;
     document.getElementById('task-error-text')?.setAttribute('style', 'display: none');
     try {
       this.ws.send(JSON.stringify({
         type: 'submit_task',
         tile_x: task.tile_x,
         tile_y: task.tile_y,
-        type_1: task.required_type_1,
-        type_2: task.required_type_2,
-        type_3: task.required_type_3,
+        type_1: type1,
+        type_2: type2,
+        type_3: type3,
       }));
     } catch (e) {
       console.error('Ошибка сдачи задания:', e);
@@ -676,18 +684,32 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  private static readonly TASK_TEXTURE_KEYS: Record<number, string> = { 1: 'task_1', 2: 'task_2', 3: 'task_3' };
+
   private syncTasks(tasks: MapTaskItem[]) {
     this.tasksState = tasks;
-    if (!this.taskGraphics) return;
-    this.taskGraphics.clear();
-    const size = 20;
+    this.taskSprites.forEach((s) => s.destroy());
+    this.taskSprites = [];
+    if (this.taskGraphicsFallback) this.taskGraphicsFallback.clear();
+    const levelKey = (l: number) => GameScene.TASK_TEXTURE_KEYS[Math.max(1, Math.min(3, l))] || 'task_1';
+    const size = TILE_SIZE * 0.8;
     tasks.forEach((t) => {
       const x = t.tile_x * TILE_SIZE + TILE_SIZE / 2;
       const y = t.tile_y * TILE_SIZE + TILE_SIZE / 2;
-      this.taskGraphics!.fillStyle(0x0088ff, 0.9);
-      this.taskGraphics!.fillRect(x - size / 2, y - size / 2, size, size);
-      this.taskGraphics!.lineStyle(2, 0x004466, 0.5);
-      this.taskGraphics!.strokeRect(x - size / 2, y - size / 2, size, size);
+      const key = levelKey(t.level ?? 1);
+      if (this.textures.exists(key)) {
+        const img = this.add.image(x, y, key);
+        img.setDisplaySize(size, size);
+        img.setDepth(0.5);
+        this.taskSprites.push(img);
+      } else {
+        if (!this.taskGraphicsFallback) {
+          this.taskGraphicsFallback = this.add.graphics();
+          this.taskGraphicsFallback.setDepth(0.5);
+        }
+        this.taskGraphicsFallback.fillStyle(0x0088ff, 0.9);
+        this.taskGraphicsFallback.fillRect(x - 10, y - 10, 20, 20);
+      }
     });
   }
 

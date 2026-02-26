@@ -125,14 +125,23 @@
         background: #2a2a2a;
         padding: 24px;
         border-radius: 10px;
-        max-width: 400px;
+        max-width: 560px;
         width: 90%;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
       }
-      #task-modal h3 { color: #fff; margin-bottom: 16px; }
-      #task-modal .task-required { color: #ccc; margin-bottom: 16px; }
-      #task-modal .task-error { color: #ff4444; margin-bottom: 10px; }
-      #task-modal .task-reward { color: #00ff00; margin-bottom: 16px; }
-      #task-modal button { margin-top: 8px; }
+      #task-modal h3 { color: #fff; margin: 0 0 8px 0; }
+      #task-modal .task-columns { display: flex; gap: 24px; flex: 1; min-height: 200px; }
+      #task-modal .task-left, #task-modal .task-right { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+      #task-modal .task-left h4, #task-modal .task-right h4 { color: #ddd; font-size: 14px; margin: 0 0 8px 0; }
+      #task-modal .task-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid #444; color: #ccc; font-size: 14px; }
+      #task-modal .task-row button { padding: 4px 10px; font-size: 12px; }
+      #task-modal .task-required { color: #ccc; font-size: 14px; }
+      #task-modal .task-transferred { color: #aaa; font-size: 14px; }
+      #task-modal .task-error { color: #ff4444; font-size: 14px; }
+      #task-modal .task-reward { color: #00ff00; font-size: 14px; }
+      #task-modal .task-actions { display: flex; gap: 8px; margin-top: 8px; }
       .start-buttons {
         display: flex;
         flex-direction: column;
@@ -266,11 +275,24 @@
       <div id="task-modal">
         <div class="modal-content">
           <h3>Задание</h3>
-          <div class="task-required" id="task-required-text"></div>
+          <div class="task-columns">
+            <div class="task-left">
+              <h4>Инвентарь</h4>
+              <div id="task-inventory-list"></div>
+            </div>
+            <div class="task-right">
+              <h4>Требуется сдать</h4>
+              <div class="task-required" id="task-required-text"></div>
+              <h4>Передано в задание</h4>
+              <div class="task-transferred" id="task-transferred-text"></div>
+              <div class="task-actions">
+                <button id="task-submit-btn" disabled>Сдать задание</button>
+                <button id="task-close-btn" class="secondary">Закрыть</button>
+              </div>
+            </div>
+          </div>
           <div class="task-error" id="task-error-text" style="display: none;"></div>
           <div class="task-reward" id="task-reward-text" style="display: none;"></div>
-          <button id="task-submit-btn">Сдать задание</button>
-          <button id="task-close-btn" class="secondary" style="margin-top: 8px;">Закрыть</button>
         </div>
       </div>
       <div id="login-container">

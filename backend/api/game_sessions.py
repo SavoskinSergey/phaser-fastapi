@@ -24,6 +24,12 @@ BONUS_COUNT = 10
 BONUS_TILE_X_MIN, BONUS_TILE_X_MAX = 1, MAP_TILES_X - 1
 BONUS_TILE_Y_MIN, BONUS_TILE_Y_MAX = 1, MAP_TILES_Y - 1
 TASK_COUNT = 10
+# Уровни заданий: (сколько ингредиентов сдать, очков награды, сколько случайных ингредиентов в награду)
+TASK_LEVELS = {
+    1: {"required_total": 2, "reward_points": 10, "reward_ingredient_count": 1},
+    2: {"required_total": 4, "reward_points": 30, "reward_ingredient_count": 3},
+    3: {"required_total": 6, "reward_points": 70, "reward_ingredient_count": 5},
+}
 MAX_PLAYERS = 4
 COUNTDOWN_SECONDS = 0 if os.environ.get("TESTING") == "1" else 10
 GAME_DURATION_SECONDS = 30
@@ -96,7 +102,18 @@ def _add_bonus_to_session(session: GameSession) -> Dict[str, Any] | None:
     return bonus
 
 
-def _add_task_to_session(session: GameSession, required: dict) -> Dict[str, Any] | None:
+def _random_required_for_total(total: int) -> tuple:
+    """Случайное разбиение total на три неотрицательных: required_type_1, 2, 3."""
+    a = random.randint(0, total)
+    b = random.randint(0, total - a)
+    c = total - a - b
+    return (a, b, c)
+
+
+def _add_task_to_session(session: GameSession, level: int) -> Dict[str, Any] | None:
+    cfg = TASK_LEVELS.get(level, TASK_LEVELS[1])
+    total = cfg["required_total"]
+    r1, r2, r3 = _random_required_for_total(total)
     occupied = _occupied_tiles(session)
     tile = _random_free_tile(occupied)
     if not tile:
@@ -106,12 +123,12 @@ def _add_task_to_session(session: GameSession, required: dict) -> Dict[str, Any]
         "id": str(uuid.uuid4()),
         "tile_x": tile_x,
         "tile_y": tile_y,
-        "required_type_1": required.get(1, 0),
-        "required_type_2": required.get(2, 0),
-        "required_type_3": required.get(3, 0),
-        "reward_points": required.get("reward_points", 10),
-        "reward_item_1": required.get("reward_item_1", 1),
-        "reward_item_2": required.get("reward_item_2", 2),
+        "level": level,
+        "required_type_1": r1,
+        "required_type_2": r2,
+        "required_type_3": r3,
+        "reward_points": cfg["reward_points"],
+        "reward_ingredient_count": cfg["reward_ingredient_count"],
     }
     session.tasks_state.append(task)
     return task
@@ -123,15 +140,8 @@ def init_session_world(session: GameSession) -> None:
         if _add_bonus_to_session(session) is None:
             break
     for _ in range(TASK_COUNT):
-        req = {
-            1: random.randint(0, 2),
-            2: random.randint(0, 2),
-            3: random.randint(0, 2),
-            "reward_points": random.choice([10, 15, 20]),
-            "reward_item_1": random.choice([1, 2, 3]),
-            "reward_item_2": random.choice([1, 2, 3]),
-        }
-        if _add_task_to_session(session, req) is None:
+        level = random.choice([1, 2, 3])
+        if _add_task_to_session(session, level) is None:
             break
 
 

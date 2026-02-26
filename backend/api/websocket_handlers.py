@@ -196,27 +196,28 @@ async def websocket_game_endpoint(websocket: WebSocket):
                     if not task_at_tile:
                         await websocket.send_json({"type": "task_error", "detail": "Задание не найдено на этой клетке"})
                         continue
-                    if t1 != task_at_tile["required_type_1"] or t2 != task_at_tile["required_type_2"] or t3 != task_at_tile["required_type_3"]:
-                        await websocket.send_json({"type": "task_error", "detail": "Нужно сдать другое количество элементов"})
+                    r1 = task_at_tile.get("required_type_1", 0)
+                    r2 = task_at_tile.get("required_type_2", 0)
+                    r3 = task_at_tile.get("required_type_3", 0)
+                    if t1 < r1 or t2 < r2 or t3 < r3:
+                        await websocket.send_json({"type": "task_error", "detail": "Недостаточно ингредиентов для сдачи"})
                         continue
-                    required = {1: t1, 2: t2, 3: t3}
                     ing = game_session.session_ingredients.get(user_id_str, {1: 0, 2: 0, 3: 0})
-                    if any(ing.get(k, 0) < required.get(k, 0) for k in (1, 2, 3)):
+                    if ing.get(1, 0) < t1 or ing.get(2, 0) < t2 or ing.get(3, 0) < t3:
                         await websocket.send_json({"type": "task_error", "detail": "Недостаточно ингредиентов в инвентаре"})
                         continue
                     game_session.tasks_state.pop(task_idx)
-                    for k in (1, 2, 3):
-                        game_session.session_ingredients[user_id_str][k] = ing.get(k, 0) - required.get(k, 0)
-                    reward_pts = task_at_tile["reward_points"]
+                    for k, deduct in ((1, t1), (2, t2), (3, t3)):
+                        game_session.session_ingredients[user_id_str][k] = ing.get(k, 0) - deduct
+                    reward_pts = task_at_tile.get("reward_points", 10)
                     game_session.scores[user_id_str] = game_session.scores.get(user_id_str, 0) + reward_pts
-                    _add_task_to_session(game_session, {
-                        1: random.randint(0, 2),
-                        2: random.randint(0, 2),
-                        3: random.randint(0, 2),
-                        "reward_points": task_at_tile.get("reward_points", 10),
-                        "reward_item_1": task_at_tile.get("reward_item_1", 1),
-                        "reward_item_2": task_at_tile.get("reward_item_2", 2),
-                    })
+                    reward_count = task_at_tile.get("reward_ingredient_count", 1)
+                    reward_ingredients = [random.choice([1, 2, 3]) for _ in range(reward_count)]
+                    for itype in reward_ingredients:
+                        game_session.session_ingredients[user_id_str][itype] = (
+                            game_session.session_ingredients[user_id_str].get(itype, 0) + 1
+                        )
+                    _add_task_to_session(game_session, random.choice([1, 2, 3]))
                     if user_id_str in game_session.players_state:
                         game_session.players_state[user_id_str]["score"] = game_session.scores[user_id_str]
                     ing2 = game_session.session_ingredients.get(user_id_str, {1: 0, 2: 0, 3: 0})
@@ -224,7 +225,7 @@ async def websocket_game_endpoint(websocket: WebSocket):
                         "type": "inventory",
                         "items": {str(k): ing2.get(k, 0) for k in (1, 2, 3)},
                         "coins": game_session.session_coins.get(user_id_str, 0),
-                        "task_completed": {"reward_points": reward_pts},
+                        "task_completed": {"reward_points": reward_pts, "reward_ingredients": reward_ingredients},
                     })
                     await broadcast_session(game_session, _state_message(game_session))
 

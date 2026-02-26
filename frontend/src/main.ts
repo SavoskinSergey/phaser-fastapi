@@ -51,10 +51,14 @@ const invBackBtn = document.getElementById('inv-back-btn') as HTMLButtonElement;
 
 const taskModal = document.getElementById('task-modal')!;
 const taskRequiredText = document.getElementById('task-required-text')!;
+const taskTransferredText = document.getElementById('task-transferred-text')!;
+const taskInventoryList = document.getElementById('task-inventory-list')!;
 const taskErrorText = document.getElementById('task-error-text')!;
 const taskRewardText = document.getElementById('task-reward-text')!;
 const taskSubmitBtn = document.getElementById('task-submit-btn') as HTMLButtonElement;
 const taskCloseBtn = document.getElementById('task-close-btn') as HTMLButtonElement;
+
+let taskTransferred: Record<number, number> = { 1: 0, 2: 0, 3: 0 };
 
 let game: Phaser.Game | null = null;
 let profileOpenedFromGame = false;
@@ -183,6 +187,10 @@ async function showInventoryPage(fromGame: boolean = false) {
 window.addEventListener('game-inventory-updated', () => {
   if (inventoryPage.style.display === 'block' && inventoryOpenedFromGame) {
     renderGameInventory();
+  }
+  if (taskModal.classList.contains('show') && (window as any).__currentTask) {
+    const render = (window as any).__renderTaskModal as (() => void) | undefined;
+    if (typeof render === 'function') render();
   }
 });
 
@@ -401,16 +409,63 @@ function startGame(tokenData: { access_token: string; user_id: string; username:
     showInventoryPage(true);
   };
 
-  (window as any).openTaskModal = (task: { id: string; required_type_1: number; required_type_2: number; required_type_3: number; reward_points: number }) => {
-    taskRequiredText.textContent = `Сдать: тип 1 — ${task.required_type_1} шт., тип 2 — ${task.required_type_2} шт., тип 3 — ${task.required_type_3} шт. Награда: ${task.reward_points} очков + 2 полуфабриката.`;
+  function renderTaskModal() {
+    const task = (window as any).__currentTask as { required_type_1: number; required_type_2: number; required_type_3: number; reward_points: number; reward_ingredient_count?: number } | null;
+    if (!task) return;
+    const inv = (window as any).gameInventory as { coins: number; items: Record<string, number> } | undefined;
+    const items = inv?.items ?? {};
+    const tr = taskTransferred;
+    const available = (t: number) => Math.max(0, Number(items[String(t)] ?? 0) - (tr[t] ?? 0));
+    taskRequiredText.textContent = `Яблоко: ${task.required_type_1} шт., Апельсин: ${task.required_type_2} шт., Ананас: ${task.required_type_3} шт. Награда: ${task.reward_points} очков + ${task.reward_ingredient_count ?? 1} ингредиент(ов).`;
+    taskTransferredText.textContent = `Яблоко: ${tr[1] ?? 0}, Апельсин: ${tr[2] ?? 0}, Ананас: ${tr[3] ?? 0}`;
+    const canSubmit = (tr[1] ?? 0) >= task.required_type_1 && (tr[2] ?? 0) >= task.required_type_2 && (tr[3] ?? 0) >= task.required_type_3;
+    taskSubmitBtn.disabled = !canSubmit;
+    const price: Record<number, number> = { 1: 100, 2: 200, 3: 300 };
+    taskInventoryList.innerHTML = [1, 2, 3].map((t) => {
+      const name = t === 1 ? 'Яблоко' : t === 2 ? 'Апельсин' : 'Ананас';
+      const avail = available(t);
+      return `<div class="task-row" data-type="${t}">
+        <span>${name}: ${avail} шт.</span>
+        <span>
+          <button type="button" class="task-buy-btn" data-type="${t}">Купить (${price[t]} монет)</button>
+          <button type="button" class="task-transfer-btn" data-type="${t}" ${avail < 1 ? 'disabled' : ''}>В задание</button>
+        </span>
+      </div>`;
+    }).join('');
+    taskInventoryList.querySelectorAll('.task-transfer-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const t = parseInt((btn as HTMLElement).dataset.type!, 10);
+        if (available(t) < 1) return;
+        taskTransferred[t] = (taskTransferred[t] ?? 0) + 1;
+        renderTaskModal();
+      });
+    });
+    taskInventoryList.querySelectorAll('.task-buy-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const gameBuy = (window as any).gameBuyIngredient as ((x: number) => void) | undefined;
+        if (typeof gameBuy === 'function') gameBuy(parseInt((btn as HTMLElement).dataset.type!, 10));
+      });
+    });
+  }
+
+  (window as any).getTransferredForTask = () => ({ ...taskTransferred });
+  (window as any).__renderTaskModal = renderTaskModal;
+
+  (window as any).openTaskModal = (task: { id: string; level?: number; required_type_1: number; required_type_2: number; required_type_3: number; reward_points: number; reward_ingredient_count?: number }) => {
+    taskTransferred = { 1: 0, 2: 0, 3: 0 };
     taskErrorText.style.display = 'none';
     taskRewardText.style.display = 'none';
     (window as any).__currentTask = task;
+    renderTaskModal();
     taskModal.classList.add('show');
   };
-  (window as any).closeTaskModal = (reward?: { reward_points?: number; reward_item_1?: number; reward_item_2?: number }) => {
-    if (reward && (reward.reward_points != null || reward.reward_item_1 != null)) {
-      taskRewardText.textContent = `Получено: ${reward.reward_points ?? 0} очков, полуфабрикаты: тип ${reward.reward_item_1 ?? 0}, тип ${reward.reward_item_2 ?? 0}`;
+
+  (window as any).closeTaskModal = (reward?: { reward_points?: number; reward_ingredients?: number[] }) => {
+    if (reward && (reward.reward_points != null || (reward.reward_ingredients && reward.reward_ingredients.length > 0))) {
+      const names: Record<number, string> = { 1: 'яблок', 2: 'апельсинов', 3: 'ананасов' };
+      const ingCounts = (reward.reward_ingredients ?? []).reduce((acc: Record<number, number>, t) => { acc[t] = (acc[t] || 0) + 1; return acc; }, {});
+      const ingStr = [1, 2, 3].map((t) => (ingCounts[t] ? `${ingCounts[t]} ${names[t]}` : '')).filter(Boolean).join(', ') || '—';
+      taskRewardText.textContent = `Получено: ${reward.reward_points ?? 0} очков, ингредиенты: ${ingStr}`;
       taskRewardText.style.display = 'block';
       taskErrorText.style.display = 'none';
       setTimeout(() => {
