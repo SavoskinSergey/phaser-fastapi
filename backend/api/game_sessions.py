@@ -13,16 +13,22 @@ from typing import Dict, List, Any, Optional
 logger = logging.getLogger(__name__)
 
 TILE_SIZE = 56
-MAP_TILES_X = 20
-MAP_TILES_Y = 15
-BONUS_TYPES = [100, 200, 500]
+# Видимая область клиента (800x600, тайл 56) — бонусы и задания только внутри
+MAP_TILES_X = 14   # 800 / 56
+MAP_TILES_Y = 10   # 600 / 56
+# Бонусы = ингредиенты: 1 яблоко, 2 апельсин, 3 ананас. При сборе дают ингредиент + монеты
+BONUS_TYPES = [1, 2, 3]  # тип ингредиента
+BONUS_COINS = {1: 100, 2: 200, 3: 300}  # монет за бонус
 BONUS_COUNT = 10
-BONUS_TILE_X_MIN, BONUS_TILE_X_MAX = 1, 11
-BONUS_TILE_Y_MIN, BONUS_TILE_Y_MAX = 1, 9
+# Верхнюю линию тайлов (y=0) и первый столбец (x=0) не занимать бонусами и заданиями
+BONUS_TILE_X_MIN, BONUS_TILE_X_MAX = 1, MAP_TILES_X - 1
+BONUS_TILE_Y_MIN, BONUS_TILE_Y_MAX = 1, MAP_TILES_Y - 1
 TASK_COUNT = 10
 MAX_PLAYERS = 4
 COUNTDOWN_SECONDS = 0 if os.environ.get("TESTING") == "1" else 10
-GAME_DURATION_SECONDS = 120  # 2 минуты
+GAME_DURATION_SECONDS = 30
+# Цены покупки ингредиентов за монеты (в игре)
+INGREDIENT_PRICES = {1: 100, 2: 200, 3: 300}  # яблоко, апельсин, ананас
 
 
 @dataclass
@@ -36,6 +42,8 @@ class GameSession:
     bonuses_state: List[Dict[str, Any]] = field(default_factory=list)
     tasks_state: List[Dict[str, Any]] = field(default_factory=list)
     scores: Dict[str, int] = field(default_factory=dict)  # очки в матче
+    session_coins: Dict[str, int] = field(default_factory=dict)  # монеты в сессии по user_id
+    session_ingredients: Dict[str, Dict[int, int]] = field(default_factory=dict)  # user_id -> {1: qty, 2: qty, 3: qty}
     started_at: Optional[float] = None
     ends_at: Optional[float] = None
     countdown_seconds_left: Optional[int] = None
@@ -185,6 +193,8 @@ async def _start_game(session: GameSession) -> None:
         session.countdown_seconds_left = None
         for uid in session.players:
             session.scores[uid] = 0
+            session.session_coins[uid] = 0
+            session.session_ingredients[uid] = {1: 0, 2: 0, 3: 0}
             if uid not in session.players_state:
                 session.players_state[uid] = {
                     "x": 100.0,
@@ -201,13 +211,14 @@ async def _start_game(session: GameSession) -> None:
         "duration_seconds": GAME_DURATION_SECONDS,
         "ends_at": session.ends_at,
     })
-    # Отправляем текущее состояние
     await broadcast_session(session, {
         "type": "state",
         "players": session.players_state,
         "bonuses": session.bonuses_state,
         "tasks": session.tasks_state,
         "scores": session.scores,
+        "coins": session.session_coins,
+        "ingredients": {uid: dict(session.session_ingredients.get(uid, {1: 0, 2: 0, 3: 0})) for uid in session.players},
         "ends_at": session.ends_at,
     })
 
@@ -225,8 +236,38 @@ async def _start_game(session: GameSession) -> None:
             "winner_username": winner_name,
             "scores": session.scores,
         })
+        # Сохраняем результаты в БД (место, очки, победа) для профиля
+        _save_game_results_sync(session.id, dict(session.scores), winner_id)
 
     session._end_task = asyncio.create_task(end_game())
+
+
+# Опыт за место: 1-е 40, 2-е 30, 3-е 20, 4-е 10, остальные 0
+XP_BY_PLACE = {1: 40, 2: 30, 3: 20, 4: 10}
+
+
+def _save_game_results_sync(game_session_id: str, scores: dict, winner_id: Optional[str]) -> None:
+    """Синхронно записать в БД лог сессии: место, очки, победа; начислить опыт по месту."""
+    try:
+        from infrastructure.database import SessionLocal
+        from infrastructure.repositories import SqlAlchemyGameSessionLogRepository, SqlAlchemyUserRepository
+        db = SessionLocal()
+        try:
+            log_repo = SqlAlchemyGameSessionLogRepository(db)
+            user_repo = SqlAlchemyUserRepository(db)
+            sorted_players = sorted(scores.items(), key=lambda x: -x[1])
+            for place, (user_id, score) in enumerate(sorted_players, start=1):
+                log_repo.log_result(
+                    game_session_id, user_id, place, score,
+                    is_winner=(user_id == winner_id),
+                )
+                xp = XP_BY_PLACE.get(place, 0)
+                if xp:
+                    user_repo.add_experience(user_id, xp)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.exception("Не удалось сохранить лог игры: %s", e)
 
 
 async def join_or_create(user_id: str, username: str) -> dict:

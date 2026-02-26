@@ -28,9 +28,24 @@ from api.game_sessions import (
     _add_task_to_session,
     _start_game,
     TILE_SIZE,
+    BONUS_COINS,
+    INGREDIENT_PRICES,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _state_message(game_session):
+    return {
+        "type": "state",
+        "players": game_session.players_state,
+        "bonuses": game_session.bonuses_state,
+        "tasks": game_session.tasks_state,
+        "scores": game_session.scores,
+        "coins": game_session.session_coins,
+        "ingredients": {uid: dict(game_session.session_ingredients.get(uid, {1: 0, 2: 0, 3: 0})) for uid in game_session.players},
+        "ends_at": game_session.ends_at,
+    }
 
 
 def get_db_session():
@@ -83,7 +98,6 @@ async def websocket_game_endpoint(websocket: WebSocket):
             await _start_game(game_session)
 
         inv_repo = SqlAlchemyInventoryRepository(db)
-        inv_repo.grant_random_on_enter(user_id_str)
         bonus_repo = SqlAlchemyBonusRepository(db)
         task_completion_repo = SqlAlchemyTaskCompletionRepository(db)
 
@@ -96,16 +110,19 @@ async def websocket_game_endpoint(websocket: WebSocket):
                 "registration_closed": game_session.registration_closed,
             })
         elif game_session.status == "in_progress":
+            ing = game_session.session_ingredients.get(user_id_str, {1: 0, 2: 0, 3: 0})
+            coins = game_session.session_coins.get(user_id_str, 0)
             await websocket.send_json({
                 "type": "state",
                 "players": game_session.players_state,
                 "bonuses": game_session.bonuses_state,
                 "tasks": game_session.tasks_state,
                 "scores": game_session.scores,
+                "coins": game_session.session_coins,
+                "ingredients": {uid: dict(game_session.session_ingredients.get(uid, {1: 0, 2: 0, 3: 0})) for uid in game_session.players},
                 "ends_at": game_session.ends_at,
             })
-            items = inv_repo.get_by_user(user_id_str)
-            await websocket.send_json({"type": "inventory", "items": {str(k): v for k, v in items.items()}})
+            await websocket.send_json({"type": "inventory", "items": {str(k): ing.get(k, 0) for k in (1, 2, 3)}, "coins": coins})
         elif game_session.status == "finished":
             await websocket.send_json({
                 "type": "game_ended",
@@ -131,14 +148,7 @@ async def websocket_game_endpoint(websocket: WebSocket):
                         player["x"] += data.get("dx", 0)
                         player["y"] += data.get("dy", 0)
                         game_session.players_state[user_id_str] = player
-                    await broadcast_session(game_session, {
-                        "type": "state",
-                        "players": game_session.players_state,
-                        "bonuses": game_session.bonuses_state,
-                        "tasks": game_session.tasks_state,
-                        "scores": game_session.scores,
-                        "ends_at": game_session.ends_at,
-                    })
+                    await broadcast_session(game_session, _state_message(game_session))
 
                 elif data.get("type") == "collect_bonus":
                     player = game_session.players_state.get(user_id_str)
@@ -153,32 +163,22 @@ async def websocket_game_endpoint(websocket: WebSocket):
                             break
                     if bonus_idx is not None:
                         bonus = game_session.bonuses_state.pop(bonus_idx)
-                        points = bonus["type"]
-                        bonus_repo.log_collection(user_id_str, None, points, bonus["type"])
-                        game_session.scores[user_id_str] = game_session.scores.get(user_id_str, 0) + points
-                        if user_id_str in game_session.players_state:
-                            game_session.players_state[user_id_str]["score"] = game_session.scores[user_id_str]
+                        btype = bonus["type"]  # 1, 2, 3
+                        if user_id_str not in game_session.session_ingredients:
+                            game_session.session_ingredients[user_id_str] = {1: 0, 2: 0, 3: 0}
+                        game_session.session_ingredients[user_id_str][btype] = game_session.session_ingredients[user_id_str].get(btype, 0) + 1
+                        game_session.session_coins[user_id_str] = game_session.session_coins.get(user_id_str, 0) + BONUS_COINS.get(btype, 0)
                         _add_bonus_to_session(game_session)
-                        await broadcast_session(game_session, {
-                            "type": "state",
-                            "players": game_session.players_state,
-                            "bonuses": game_session.bonuses_state,
-                            "tasks": game_session.tasks_state,
-                            "scores": game_session.scores,
-                            "ends_at": game_session.ends_at,
-                        })
+                        await broadcast_session(game_session, _state_message(game_session))
+                        ing = game_session.session_ingredients.get(user_id_str, {1: 0, 2: 0, 3: 0})
+                        coins = game_session.session_coins.get(user_id_str, 0)
+                        await websocket.send_json({"type": "inventory", "items": {str(k): ing.get(k, 0) for k in (1, 2, 3)}, "coins": coins})
 
                 elif data.get("type") == "sync":
-                    await websocket.send_json({
-                        "type": "state",
-                        "players": game_session.players_state,
-                        "bonuses": game_session.bonuses_state,
-                        "tasks": game_session.tasks_state,
-                        "scores": game_session.scores,
-                        "ends_at": game_session.ends_at,
-                    })
-                    items = inv_repo.get_by_user(user_id_str)
-                    await websocket.send_json({"type": "inventory", "items": {str(k): v for k, v in items.items()}})
+                    await websocket.send_json(_state_message(game_session))
+                    ing = game_session.session_ingredients.get(user_id_str, {1: 0, 2: 0, 3: 0})
+                    coins = game_session.session_coins.get(user_id_str, 0)
+                    await websocket.send_json({"type": "inventory", "items": {str(k): ing.get(k, 0) for k in (1, 2, 3)}, "coins": coins})
 
                 elif data.get("type") == "submit_task":
                     tile_x = int(data.get("tile_x", -1))
@@ -200,16 +200,15 @@ async def websocket_game_endpoint(websocket: WebSocket):
                         await websocket.send_json({"type": "task_error", "detail": "Нужно сдать другое количество элементов"})
                         continue
                     required = {1: t1, 2: t2, 3: t3}
-                    if not inv_repo.has_at_least(user_id_str, required):
-                        await websocket.send_json({"type": "task_error", "detail": "Недостаточно элементов в инвентаре"})
+                    ing = game_session.session_ingredients.get(user_id_str, {1: 0, 2: 0, 3: 0})
+                    if any(ing.get(k, 0) < required.get(k, 0) for k in (1, 2, 3)):
+                        await websocket.send_json({"type": "task_error", "detail": "Недостаточно ингредиентов в инвентаре"})
                         continue
                     game_session.tasks_state.pop(task_idx)
-                    inv_repo.deduct(user_id_str, required)
+                    for k in (1, 2, 3):
+                        game_session.session_ingredients[user_id_str][k] = ing.get(k, 0) - required.get(k, 0)
                     reward_pts = task_at_tile["reward_points"]
                     game_session.scores[user_id_str] = game_session.scores.get(user_id_str, 0) + reward_pts
-                    inv_repo.add_quantity(user_id_str, task_at_tile["reward_item_1"], 1)
-                    inv_repo.add_quantity(user_id_str, task_at_tile["reward_item_2"], 1)
-                    task_completion_repo.log(user_id_str, reward_pts, task_at_tile["reward_item_1"], task_at_tile["reward_item_2"])
                     _add_task_to_session(game_session, {
                         1: random.randint(0, 2),
                         2: random.randint(0, 2),
@@ -220,23 +219,34 @@ async def websocket_game_endpoint(websocket: WebSocket):
                     })
                     if user_id_str in game_session.players_state:
                         game_session.players_state[user_id_str]["score"] = game_session.scores[user_id_str]
-                    items = inv_repo.get_by_user(user_id_str)
+                    ing2 = game_session.session_ingredients.get(user_id_str, {1: 0, 2: 0, 3: 0})
                     await websocket.send_json({
                         "type": "inventory",
-                        "items": {str(k): v for k, v in items.items()},
-                        "task_completed": {
-                            "reward_points": reward_pts,
-                            "reward_item_1": task_at_tile["reward_item_1"],
-                            "reward_item_2": task_at_tile["reward_item_2"],
-                        },
+                        "items": {str(k): ing2.get(k, 0) for k in (1, 2, 3)},
+                        "coins": game_session.session_coins.get(user_id_str, 0),
+                        "task_completed": {"reward_points": reward_pts},
                     })
-                    await broadcast_session(game_session, {
-                        "type": "state",
-                        "players": game_session.players_state,
-                        "bonuses": game_session.bonuses_state,
-                        "tasks": game_session.tasks_state,
-                        "scores": game_session.scores,
-                        "ends_at": game_session.ends_at,
+                    await broadcast_session(game_session, _state_message(game_session))
+
+                elif data.get("type") == "buy_ingredient":
+                    item_type = int(data.get("item_type", 0))
+                    if item_type not in (1, 2, 3):
+                        await websocket.send_json({"type": "task_error", "detail": "Неверный тип ингредиента"})
+                        continue
+                    price = INGREDIENT_PRICES.get(item_type, 0)
+                    coins = game_session.session_coins.get(user_id_str, 0)
+                    if coins < price:
+                        await websocket.send_json({"type": "task_error", "detail": "Недостаточно монет"})
+                        continue
+                    game_session.session_coins[user_id_str] = coins - price
+                    if user_id_str not in game_session.session_ingredients:
+                        game_session.session_ingredients[user_id_str] = {1: 0, 2: 0, 3: 0}
+                    game_session.session_ingredients[user_id_str][item_type] = game_session.session_ingredients[user_id_str].get(item_type, 0) + 1
+                    ing = game_session.session_ingredients[user_id_str]
+                    await websocket.send_json({
+                        "type": "inventory",
+                        "items": {str(k): ing.get(k, 0) for k in (1, 2, 3)},
+                        "coins": game_session.session_coins[user_id_str],
                     })
 
                 elif data.get("type") == "exit":

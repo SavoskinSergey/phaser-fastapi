@@ -61,14 +61,14 @@
       #profile-page .profile-section strong {
         color: #00ff00;
       }
-      #profile-page .bonus-list {
+      #profile-page .games-list {
         list-style: none;
         padding: 0;
         margin: 0;
         max-height: 200px;
         overflow-y: auto;
       }
-      #profile-page .bonus-list li {
+      #profile-page .games-list li {
         padding: 8px 0;
         border-bottom: 1px solid #444;
         color: #ccc;
@@ -241,18 +241,13 @@
         <h2>Профиль</h2>
         <div class="profile-section">
           <p><strong>Игрок:</strong> <span id="profile-username">—</span></p>
-          <p><strong>Баланс очков:</strong> <span id="profile-balance">0</span></p>
+          <p><strong>Опыт:</strong> <span id="profile-experience">0</span></p>
         </div>
         <div class="profile-section">
-          <strong>Последние собранные бонусы</strong>
-          <ul id="profile-bonus-list" class="bonus-list"></ul>
-        </div>
-        <div class="profile-section">
-          <strong>Последние выполненные задания</strong>
-          <ul id="profile-task-list" class="bonus-list"></ul>
+          <strong>Последние сыгранные сессии</strong>
+          <ul id="profile-games-list" class="games-list"></ul>
         </div>
         <div class="profile-nav">
-          <button id="profile-inventory-btn" class="secondary">Инвентарь</button>
           <button id="profile-to-main-btn" class="secondary">На главную</button>
           <button id="profile-to-game-btn" class="secondary" style="display: none;">В игру</button>
           <button id="profile-logout-btn" class="danger">Выйти</button>
@@ -260,7 +255,7 @@
       </div>
       <div id="inventory-page">
         <h2>Инвентарь</h2>
-        <p style="color: #ccc; margin-bottom: 15px;">Баланс: <strong id="inv-balance">0</strong> очков</p>
+        <p style="color: #ccc; margin-bottom: 15px;">Монеты: <strong id="inv-balance">0</strong></p>
         <div id="inv-list"></div>
         <div class="inv-nav">
           <button id="inv-to-main-btn" class="secondary">На главную</button>

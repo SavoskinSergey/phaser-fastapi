@@ -15,7 +15,7 @@ interface PlayersState {
 
 interface BonusItem {
   id: string;
-  type: number; // 100 | 200 | 500
+  type: number; // 1 яблоко | 2 апельсин | 3 ананас
   tile_x: number;
   tile_y: number;
 }
@@ -43,9 +43,12 @@ export class GameScene extends Phaser.Scene {
   private refreshButton?: Phaser.GameObjects.Text;
   private groundTile?: Phaser.GameObjects.TileSprite;
   private gridGraphics?: Phaser.GameObjects.Graphics;
-  private bonusGraphics?: Phaser.GameObjects.Graphics;
+  private bonusSprites: Phaser.GameObjects.Image[] = [];
+  private bonusGraphicsFallback?: Phaser.GameObjects.Graphics;
   private taskGraphics?: Phaser.GameObjects.Graphics;
   private balanceLabel?: Phaser.GameObjects.Text;
+  private coinLabel?: Phaser.GameObjects.Text;
+  private sessionCoins: number = 0;
   private otherPlayers: Map<string, { sprite: Phaser.GameObjects.Sprite; label: Phaser.GameObjects.Text }> = new Map();
   private keys!: {
     up: Phaser.Input.Keyboard.Key;
@@ -96,6 +99,11 @@ export class GameScene extends Phaser.Scene {
       frameWidth: frameWidth,
       frameHeight: frameHeight
     });
+
+    // Бонусы: отдельные спрайты — тип 1 яблоко, 2 апельсин, 3 ананас
+    this.load.image('apple', '/assets/apple.png');
+    this.load.image('orange', '/assets/orange.png');
+    this.load.image('pineapple', '/assets/pineapple.png');
 
     // Создаем текстуру земли для фона
     this.createGroundTexture();
@@ -246,19 +254,21 @@ export class GameScene extends Phaser.Scene {
       e: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E),
     };
 
-    // Графика для бонусов (кружки на карте)
-    this.bonusGraphics = this.add.graphics();
-    this.bonusGraphics.setDepth(0.5);
     // Графика для заданий на карте (квадраты)
     this.taskGraphics = this.add.graphics();
     this.taskGraphics.setDepth(0.5);
 
-    // Баланс очков игрока
+    // Баланс очков и монет
     this.balanceLabel = this.add.text(10, 32, 'Очки: 0', {
       fontSize: '16px',
       color: '#ffffff',
     });
     this.balanceLabel.setDepth(10);
+    this.coinLabel = this.add.text(10, 54, 'Монеты: 0', {
+      fontSize: '16px',
+      color: '#ffcc00',
+    });
+    this.coinLabel.setDepth(10);
 
     const wsUrl = `ws://localhost:8000/ws/game?token=${encodeURIComponent(token)}&session_id=${encodeURIComponent(this.sessionId)}`;
     this.ws = new WebSocket(wsUrl);
@@ -328,15 +338,24 @@ export class GameScene extends Phaser.Scene {
             if (this.lobbyText) this.lobbyText.setVisible(false);
           }
           this.syncPlayers(msg.players!);
-          if (msg.bonuses) {
-            this.bonusesState = msg.bonuses;
-            this.syncBonuses(msg.bonuses);
-          }
+          this.bonusesState = Array.isArray(msg.bonuses) ? msg.bonuses : [];
+          this.syncBonuses(this.bonusesState);
           if (msg.tasks) this.syncTasks(msg.tasks);
           if (msg.scores && this.balanceLabel) {
             this.currentScore = msg.scores[this.playerId] ?? 0;
             this.balanceLabel.setText(`Очки: ${this.currentScore}`);
           }
+          const coins = (msg as any).coins;
+          if (coins && this.playerId in coins) {
+            this.sessionCoins = Number(coins[this.playerId]) || 0;
+            if (this.coinLabel) this.coinLabel.setText(`Монеты: ${this.sessionCoins}`);
+          }
+          const ingredients = (msg as any).ingredients;
+          if (ingredients && this.playerId in ingredients) {
+            const inv = ingredients[this.playerId] as Record<number, number>;
+            this.inventoryState = { '1': inv[1] ?? 0, '2': inv[2] ?? 0, '3': inv[3] ?? 0 };
+          }
+          this.updateGameInventory();
         } else if (msg.type === 'game_ended') {
           this.gameInProgress = false;
           if (this.lobbyText) this.lobbyText.setVisible(false);
@@ -349,6 +368,12 @@ export class GameScene extends Phaser.Scene {
           }
         } else if (msg.type === 'inventory') {
           this.inventoryState = msg.items || {};
+          const coins = (msg as any).coins;
+          if (typeof coins === 'number') {
+            this.sessionCoins = coins;
+            if (this.coinLabel) this.coinLabel.setText(`Монеты: ${this.sessionCoins}`);
+          }
+          this.updateGameInventory();
           if (msg.task_completed) {
             const closeTaskModal = (window as any).closeTaskModal;
             if (typeof closeTaskModal === 'function') closeTaskModal(msg.task_completed);
@@ -373,6 +398,15 @@ export class GameScene extends Phaser.Scene {
     };
 
     (window as any).gameSubmitTask = () => this.submitTask();
+    (window as any).gameBuyIngredient = (itemType: number) => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        try {
+          this.ws.send(JSON.stringify({ type: 'buy_ingredient', item_type: itemType }));
+        } catch (e) {
+          console.error('Ошибка покупки ингредиента:', e);
+        }
+      }
+    };
     (window as any).__currentTask = null;
 
     // Инструкции на экране
@@ -589,18 +623,56 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private updateGameInventory() {
+    (window as any).gameInventory = {
+      coins: this.sessionCoins,
+      items: { ...this.inventoryState },
+    };
+    window.dispatchEvent(new CustomEvent('game-inventory-updated'));
+  }
+
+  private static readonly BONUS_TEXTURE_KEYS: Record<number, string> = {
+    1: 'apple',
+    2: 'orange',
+    3: 'pineapple',
+  };
+
   private syncBonuses(bonuses: BonusItem[]) {
-    if (!this.bonusGraphics) return;
-    this.bonusGraphics.clear();
-    const radius = 18;
-    bonuses.forEach((b) => {
-      const x = b.tile_x * TILE_SIZE + TILE_SIZE / 2;
-      const y = b.tile_y * TILE_SIZE + TILE_SIZE / 2;
-      const color = b.type === 100 ? 0x00ff00 : b.type === 200 ? 0xffff00 : 0xff0000;
-      this.bonusGraphics!.fillStyle(color, 0.9);
-      this.bonusGraphics!.fillCircle(x, y, radius);
-      this.bonusGraphics!.lineStyle(2, 0x000000, 0.3);
-      this.bonusGraphics!.strokeCircle(x, y, radius);
+    this.bonusSprites.forEach((s) => s.destroy());
+    this.bonusSprites = [];
+    const radius = 20;
+    const hasAnyBonusImage =
+      this.textures.exists('apple') || this.textures.exists('orange') || this.textures.exists('pineapple');
+    if (hasAnyBonusImage && this.bonusGraphicsFallback) {
+      this.bonusGraphicsFallback.clear();
+    }
+    if (!hasAnyBonusImage) {
+      if (!this.bonusGraphicsFallback) {
+        this.bonusGraphicsFallback = this.add.graphics();
+        this.bonusGraphicsFallback.setDepth(0.5);
+      }
+      this.bonusGraphicsFallback.clear();
+    }
+    const list = Array.isArray(bonuses) ? bonuses : [];
+    list.forEach((b) => {
+      const tileX = Number(b.tile_x ?? 0);
+      const tileY = Number(b.tile_y ?? 0);
+      const x = tileX * TILE_SIZE + TILE_SIZE / 2;
+      const y = tileY * TILE_SIZE + TILE_SIZE / 2;
+      const type = Math.max(1, Math.min(3, Number(b.type) || 1));
+      const textureKey = GameScene.BONUS_TEXTURE_KEYS[type];
+      if (hasAnyBonusImage && textureKey && this.textures.exists(textureKey)) {
+        const img = this.add.image(x, y, textureKey);
+        img.setDisplaySize(TILE_SIZE * 0.8, TILE_SIZE * 0.8);
+        img.setDepth(0.5);
+        this.bonusSprites.push(img);
+      } else {
+        const color = type === 1 ? 0xcc0000 : type === 2 ? 0xff8800 : 0xffff00;
+        this.bonusGraphicsFallback!.fillStyle(color, 0.9);
+        this.bonusGraphicsFallback!.fillCircle(x, y, radius);
+        this.bonusGraphicsFallback!.lineStyle(2, 0x000000, 0.3);
+        this.bonusGraphicsFallback!.strokeCircle(x, y, radius);
+      }
     });
   }
 

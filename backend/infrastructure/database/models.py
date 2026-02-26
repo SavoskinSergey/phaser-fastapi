@@ -21,6 +21,7 @@ class UserModel(Base):
     hashed_password = Column(String(255), nullable=False)
     balance_points = Column(Integer, default=0, nullable=False)
     balance_mana = Column(Integer, default=0, nullable=False)
+    experience = Column(Integer, default=0, nullable=False)
     location_x = Column(Float, default=100.0, nullable=False)
     location_y = Column(Float, default=100.0, nullable=False)
     last_login = Column(DateTime(timezone=False), nullable=True)
@@ -125,3 +126,16 @@ class TaskCompletionModel(Base):
     reward_item_1 = Column(Integer, nullable=False)
     reward_item_2 = Column(Integer, nullable=False)
     completed_at = Column(DateTime(timezone=False), default=datetime.utcnow, nullable=False)
+
+
+class GameSessionLogModel(Base):
+    """Лог сессий игр: результат игрока в матче (место, очки, победа)."""
+    __tablename__ = "game_session_log"
+
+    id = Column(String(36), primary_key=True, default=_uuid_str)
+    game_session_id = Column(String(36), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    place = Column(Integer, nullable=False)  # 1 = первое место, 2 = второе, ...
+    score = Column(Integer, nullable=False)
+    is_winner = Column(Integer, nullable=False)  # 1 = победитель, 0 = нет
+    played_at = Column(DateTime(timezone=False), default=datetime.utcnow, nullable=False)

@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from sqlalchemy.orm import Session
+from sqlalchemy import update
 
 from domain.entities.user import User
 from domain.repositories.user_repository import UserRepository
@@ -15,6 +16,7 @@ def _to_domain(m: UserModel) -> User:
         hashed_password=m.hashed_password,
         balance_points=m.balance_points,
         balance_mana=m.balance_mana,
+        experience=getattr(m, "experience", 0) or 0,
         location_x=float(m.location_x),
         location_y=float(m.location_y),
         last_login=m.last_login,
@@ -24,7 +26,7 @@ def _to_domain(m: UserModel) -> User:
 
 
 def _to_model(u: User) -> UserModel:
-    return UserModel(
+    m = UserModel(
         id=str(u.id),
         username=u.username,
         email=u.email,
@@ -37,6 +39,9 @@ def _to_model(u: User) -> UserModel:
         created_at=u.created_at,
         updated_at=u.updated_at,
     )
+    if hasattr(UserModel, "experience"):
+        m.experience = getattr(u, "experience", 0) or 0
+    return m
 
 
 class SqlAlchemyUserRepository(UserRepository):
@@ -69,6 +74,8 @@ class SqlAlchemyUserRepository(UserRepository):
         m.hashed_password = user.hashed_password
         m.balance_points = user.balance_points
         m.balance_mana = user.balance_mana
+        if hasattr(m, "experience"):
+            m.experience = getattr(user, "experience", 0) or 0
         m.location_x = user.location_x
         m.location_y = user.location_y
         m.last_login = user.last_login
@@ -76,3 +83,9 @@ class SqlAlchemyUserRepository(UserRepository):
         self._db.commit()
         self._db.refresh(m)
         return _to_domain(m)
+
+    def add_experience(self, user_id: str, amount: int) -> None:
+        if not hasattr(UserModel, "experience"):
+            return
+        self._db.execute(update(UserModel).where(UserModel.id == user_id).values(experience=UserModel.experience + amount))
+        self._db.commit()

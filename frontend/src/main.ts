@@ -36,13 +36,11 @@ const backToStartFromLogin = document.getElementById('back-to-start-from-login')
 const backToStartFromRegister = document.getElementById('back-to-start-from-register')!;
 
 const profileUsername = document.getElementById('profile-username')!;
-const profileBalance = document.getElementById('profile-balance')!;
-const profileBonusList = document.getElementById('profile-bonus-list')!;
-const profileTaskList = document.getElementById('profile-task-list')!;
+const profileExperience = document.getElementById('profile-experience')!;
+const profileGamesList = document.getElementById('profile-games-list')!;
 const profileToMainBtn = document.getElementById('profile-to-main-btn') as HTMLButtonElement;
 const profileToGameBtn = document.getElementById('profile-to-game-btn') as HTMLButtonElement;
 const profileLogoutBtn = document.getElementById('profile-logout-btn') as HTMLButtonElement;
-const profileInventoryBtn = document.getElementById('profile-inventory-btn') as HTMLButtonElement;
 
 const inventoryPage = document.getElementById('inventory-page')!;
 const invBalance = document.getElementById('inv-balance')!;
@@ -118,20 +116,14 @@ async function showProfilePage(fromGame: boolean = false) {
     }
     const data = await res.json();
     profileUsername.textContent = data.username || '—';
-    profileBalance.textContent = String(data.balance_points ?? 0);
-    const bonusList = data.recent_bonus_collections || [];
-    profileBonusList.innerHTML = bonusList.length === 0
-      ? '<li style="color:#666">Пока нет собранных бонусов</li>'
-      : bonusList.map((b: { points: number; bonus_type: number; collected_at: string | null }) => {
-          const date = b.collected_at ? new Date(b.collected_at).toLocaleString() : '—';
-          return `<li>+${b.points} (тип ${b.bonus_type}) — ${date}</li>`;
-        }).join('');
-    const taskList = data.recent_task_completions || [];
-    profileTaskList.innerHTML = taskList.length === 0
-      ? '<li style="color:#666">Пока нет выполненных заданий</li>'
-      : taskList.map((t: { reward_points: number; reward_item_1: number; reward_item_2: number; completed_at: string | null }) => {
-          const date = t.completed_at ? new Date(t.completed_at).toLocaleString() : '—';
-          return `<li>+${t.reward_points} очков, полуфабрикаты: ${t.reward_item_1}, ${t.reward_item_2} — ${date}</li>`;
+    profileExperience.textContent = String(data.experience ?? 0);
+    const gamesList = data.recent_games || [];
+    profileGamesList.innerHTML = gamesList.length === 0
+      ? '<li style="color:#666">Пока нет сыгранных игр</li>'
+      : gamesList.map((g: { place: number; score: number; is_winner: boolean; played_at: string | null }) => {
+          const date = g.played_at ? new Date(g.played_at).toLocaleString() : '—';
+          const result = g.is_winner ? 'Победа' : `${g.place} место`;
+          return `<li>${result} — ${g.score} очков (${date})</li>`;
         }).join('');
   } catch {
     showStartPage();
@@ -142,7 +134,33 @@ function hideProfilePage() {
   profilePage.style.display = 'none';
 }
 
-const ITEM_PRICES: Record<number, number> = { 1: 10, 2: 20, 3: 30 };
+// Цены ингредиентов в монетах в игре: яблоко 100, апельсин 200, ананас 300
+const GAME_ITEM_PRICES: Record<number, number> = { 1: 100, 2: 200, 3: 300 };
+const ITEM_NAMES: Record<number, string> = { 1: 'Яблоко', 2: 'Апельсин', 3: 'Ананас' };
+
+function renderGameInventory() {
+  const inv = (window as any).gameInventory as { coins: number; items: Record<string, number> } | undefined;
+  const coins = inv?.coins ?? 0;
+  const items = inv?.items ?? {};
+  invBalance.textContent = String(coins);
+  invList.innerHTML = [1, 2, 3].map((t) => {
+    const qty = Number(items[String(t)] ?? 0);
+    const price = GAME_ITEM_PRICES[t] ?? 0;
+    const name = ITEM_NAMES[t] ?? `Тип ${t}`;
+    return `<div class="inv-item">
+      <span>${name}: ${qty} шт. (покупка: ${price} монет)</span>
+      <button type="button" data-buy="${t}">Купить</button>
+    </div>`;
+  }).join('');
+  invList.querySelectorAll('[data-buy]').forEach((b) => {
+    (b as HTMLButtonElement).addEventListener('click', () => {
+      const gameBuyIngredient = (window as any).gameBuyIngredient as ((t: number) => void) | undefined;
+      if (typeof gameBuyIngredient === 'function') {
+        gameBuyIngredient(parseInt((b as HTMLElement).dataset.buy!, 10));
+      }
+    });
+  });
+}
 
 async function showInventoryPage(fromGame: boolean = false) {
   inventoryOpenedFromGame = fromGame;
@@ -158,65 +176,17 @@ async function showInventoryPage(fromGame: boolean = false) {
     showStartPage();
     return;
   }
-  try {
-    const [meRes, invRes] = await Promise.all([
-      fetch(`${API_URL}/api/me`, { headers: { Authorization: `Bearer ${token}` } }),
-      fetch(`${API_URL}/api/me/inventory`, { headers: { Authorization: `Bearer ${token}` } }),
-    ]);
-    if (!meRes.ok || !invRes.ok) {
-      showStartPage();
-      return;
-    }
-    const me = await meRes.json();
-    const inv = await invRes.json();
-    invBalance.textContent = String(me.balance_points ?? 0);
-    const items = inv.items || {};
-    invList.innerHTML = [1, 2, 3].map((t) => {
-      const qty = Number(items[String(t)] ?? 0);
-      const price = ITEM_PRICES[t] ?? 0;
-      return `<div class="inv-item">
-        <span>Элемент типа ${t}: ${qty} шт. (покупка: ${price} очков)</span>
-        <button type="button" data-buy="${t}">Купить</button>
-      </div>`;
-    }).join('');
-    invList.querySelectorAll('[data-buy]').forEach((b) => {
-      (b as HTMLButtonElement).addEventListener('click', () => {
-        buyItemAndRefresh(parseInt((b as HTMLElement).dataset.buy!, 10));
-      });
-    });
-  } catch {
-    showStartPage();
-  }
+  // Инвентарь открывается только из игры — используем сессионные монеты и ингредиенты
+  renderGameInventory();
 }
 
-async function buyItemAndRefresh(itemType: number) {
-  const token = AuthService.getToken();
-  if (!token) return;
-  const res = await fetch(`${API_URL}/api/me/inventory/buy`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ item_type: itemType }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    alert(err.detail || 'Не удалось купить');
-    return;
+window.addEventListener('game-inventory-updated', () => {
+  if (inventoryPage.style.display === 'block' && inventoryOpenedFromGame) {
+    renderGameInventory();
   }
-  const data = await res.json();
-  invBalance.textContent = String(data.balance_points);
-  const items2 = data.items || {};
-  invList.innerHTML = [1, 2, 3].map((t) => {
-    const qty = Number(items2[String(t)] ?? 0);
-    const price = ITEM_PRICES[t] ?? 0;
-    return `<div class="inv-item">
-      <span>Элемент типа ${t}: ${qty} шт. (покупка: ${price} очков)</span>
-      <button type="button" data-buy="${t}">Купить</button>
-    </div>`;
-  }).join('');
-  invList.querySelectorAll('[data-buy]').forEach((btn) => {
-    (btn as HTMLButtonElement).addEventListener('click', () => buyItemAndRefresh(parseInt((btn as HTMLElement).dataset.buy!, 10)));
-  });
-}
+});
+
+// Покупка в игре идёт через WebSocket (gameBuyIngredient); обновление инвентаря — по событию game-inventory-updated
 
 function hideInventoryPage() {
   inventoryPage.style.display = 'none';
@@ -277,11 +247,6 @@ logoutBtn.addEventListener('click', () => {
 
 profileStartBtn.addEventListener('click', () => {
   showProfilePage(false);
-});
-
-profileInventoryBtn.addEventListener('click', () => {
-  profilePage.style.display = 'none';
-  showInventoryPage(false);
 });
 
 profileToMainBtn.addEventListener('click', () => {

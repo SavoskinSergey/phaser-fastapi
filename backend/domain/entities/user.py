@@ -19,6 +19,7 @@ class User:
     hashed_password: str
     balance_points: int = 0
     balance_mana: int = 0
+    experience: int = 0
     location_x: float = 100.0
     location_y: float = 100.0
     last_login: Optional[datetime] = None

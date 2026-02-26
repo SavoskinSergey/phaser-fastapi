@@ -23,3 +23,7 @@ class UserRepository(ABC):
     @abstractmethod
     def save(self, user: User) -> User:
         pass
+
+    def add_experience(self, user_id: str, amount: int) -> None:
+        """Добавить опыт пользователю (опционально переопределить)."""
+        pass

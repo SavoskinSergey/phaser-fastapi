@@ -24,22 +24,18 @@ class UserMe(BaseModel):
     username: str
     balance_points: int
     balance_mana: int
+    experience: int
     location_x: float
     location_y: float
     last_login: str | None
 
 
-class BonusCollectionItem(BaseModel):
-    points: int
-    bonus_type: int
-    collected_at: str | None
-
-
-class TaskCompletionItem(BaseModel):
-    reward_points: int
-    reward_item_1: int
-    reward_item_2: int
-    completed_at: str | None
+class GameSessionLogItem(BaseModel):
+    """Результат одной игры в профиле: место, очки, победа."""
+    place: int
+    score: int
+    is_winner: bool
+    played_at: str | None
 
 
 class ProfileResponse(BaseModel):
@@ -47,11 +43,11 @@ class ProfileResponse(BaseModel):
     username: str
     balance_points: int
     balance_mana: int
+    experience: int
     location_x: float
     location_y: float
     last_login: str | None
-    recent_bonus_collections: list[BonusCollectionItem]
-    recent_task_completions: list[TaskCompletionItem]
+    recent_games: list[GameSessionLogItem]
 
 
 class InventoryResponse(BaseModel):

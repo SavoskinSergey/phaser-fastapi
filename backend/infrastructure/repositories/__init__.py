@@ -5,6 +5,7 @@ from .inventory_repository_impl import SqlAlchemyInventoryRepository
 from .task_repository_impl import SqlAlchemyTaskRepository
 from .map_task_repository_impl import SqlAlchemyMapTaskRepository
 from .task_completion_repository_impl import SqlAlchemyTaskCompletionRepository
+from .game_session_log_repository_impl import SqlAlchemyGameSessionLogRepository
 
 __all__ = [
     "SqlAlchemyUserRepository",
@@ -14,4 +15,5 @@ __all__ = [
     "SqlAlchemyTaskRepository",
     "SqlAlchemyMapTaskRepository",
     "SqlAlchemyTaskCompletionRepository",
+    "SqlAlchemyGameSessionLogRepository",
 ]
